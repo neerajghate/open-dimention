@@ -52,6 +52,7 @@ $("#app").innerHTML = `
   <section class="stage" aria-label="3D world"><div id="canvas-container"></div><div class="world-heading"><span class="eyebrow">THINK IN A NEW DIMENSION</span><h1>Make room for your ideas<span>.</span></h1><p>Rooms for your topics. Space for what’s next.</p></div>
   <div id="world-notice" class="world-notice" hidden></div><div id="dim-focus" class="dim-focus" hidden></div>
   <div id="selection-bar" class="selection-bar" hidden></div>
+  <div class="view-presets" aria-label="Camera alignment"><button data-view="aligned" aria-pressed="true" title="Center the camera on the room axes">Aligned 3D</button><button data-view="top" aria-pressed="false" title="Look straight down at the X/Z plane">Top</button></div>
   <div class="view-toolbar" aria-label="View and placement controls">${[
     ["select", "↖", "Explore"],
     ["multi", "▧", "Select items"],
@@ -1116,6 +1117,9 @@ $("#type-filter").onchange = (e) => {
 };
 $("#move-axis").onchange = () => setMode(mode);
 $("#snap").onchange = () => setMode(mode);
+document.querySelectorAll("[data-view]").forEach((button) => {
+  button.onclick = () => scene?.setView(button.dataset.view);
+});
 $("#fit").onclick = () => scene?.fit();
 $("#reset").onclick = () => scene?.fit(true);
 $("#new-document").onclick = () => navigate(() => createMenu());
@@ -1129,7 +1133,7 @@ $("#export").onclick = exportJSON;
 $("#import").onclick = () => $("#import-file").click();
 $("#help").onclick = () =>
   modal(
-    `<div class="dialog-heading"><div><span class="eyebrow">WELCOME TO YOUR WORLD</span><h2>A house for your thoughts.</h2></div><button data-close-dialog aria-label="Close guide">×</button></div><dl class="guide"><dt>Create a Dim</dt><dd>A room for a topic. Click its name in Quick access to zoom in. Create named Desks for active work and Storage for reference using the organizer on the right.</dd><dt>Open and return</dt><dd>Click a document to expand it into a full reading page. Back to 3D or Escape returns it to its place. Use Save or Ctrl/Cmd+S to keep edits.</dd><dt>Move around</dt><dd>Drag empty space to orbit. Pan or right-drag to pan. Scroll to zoom. Use Fit all to find everything.</dd><dt>Organize your Dim</dt><dd>Pick an area, then use New document or Bring existing. Move documents between named areas using their arrow button. Renaming an area keeps its contents; removing one moves its contents to another area you choose.</dd><dt>Reserved space</dt><dd>Independent documents stay outside every Dim. Assign a document to a Desk or Storage to bring it inside. Moving a Dim carries its contents and stops before another room or outside document.</dd><dt>Arrange your world</dt><dd>Choose Select items or Shift-click cards to select several. Align them, snap to a 50-unit grid, or move them together. Moving a Dim carries its contents. Movement saves immediately and offers Undo.</dd><dt>Follow connections</dt><dd>Click a line label, open Connections in the sidebar, or follow the incoming and outgoing cards in an editor. Dims can connect to Dims or documents.</dd><dt>Keep your work safe</dt><dd>Deleted items go to Trash. Restore a Dim with its contents and connections. Export includes Trash; import previews and appends content without replacing your existing world.</dd></dl><button data-close-dialog class="primary">Make yourself at home</button>`,
+    `<div class="dialog-heading"><div><span class="eyebrow">WELCOME TO YOUR WORLD</span><h2>A house for your thoughts.</h2></div><button data-close-dialog aria-label="Close guide">×</button></div><dl class="guide"><dt>Create a Dim</dt><dd>A room for a topic. Click its name in Quick access to zoom in. Create named Desks for active work and Storage for reference using the organizer on the right.</dd><dt>Open and return</dt><dd>Click a document to expand it into a full reading page. Back to 3D or Escape returns it to its place. Use Save or Ctrl/Cmd+S to keep edits.</dd><dt>Move around</dt><dd>Drag empty space to orbit. Pan or right-drag to pan. Scroll to zoom. Use Fit all to find everything. Aligned 3D straightens the camera to the room axes; Top looks directly down at the floor. The room grid follows 50-unit Snap spacing.</dd><dt>Organize your Dim</dt><dd>Pick an area, then use New document or Bring existing. Move documents between named areas using their arrow button. Renaming an area keeps its contents; removing one moves its contents to another area you choose.</dd><dt>Reserved space</dt><dd>Independent documents stay outside every Dim. Assign a document to a Desk or Storage to bring it inside. Moving a Dim carries its contents and stops before another room or outside document.</dd><dt>Arrange your world</dt><dd>Choose Select items or Shift-click cards to select several. Align them, snap to a 50-unit grid, or move them together. Moving a Dim carries its contents. Movement saves immediately and offers Undo.</dd><dt>Follow connections</dt><dd>Click a line label, open Connections in the sidebar, or follow the incoming and outgoing cards in an editor. Dims can connect to Dims or documents.</dd><dt>Keep your work safe</dt><dd>Deleted items go to Trash. Restore a Dim with its contents and connections. Export includes Trash; import previews and appends content without replacing your existing world.</dd></dl><button data-close-dialog class="primary">Make yourself at home</button>`,
   );
 document.addEventListener("input", (e) => {
   if (!draft || !["document-dim", "document-zone"].includes(e.target.id))
@@ -1244,6 +1248,7 @@ function unavailable() {
     "<h2>Your world is still here.</h2><p>WebGL is unavailable. Use the sidebar, Dims, and full-page editors. Enable browser hardware acceleration and reload to return to 3D.</p>",
   );
   document.querySelector(".view-toolbar").hidden = true;
+  document.querySelector(".view-presets").hidden = true;
 }
 async function load() {
   try {
@@ -1262,6 +1267,15 @@ async function load() {
         canMove: () => !busy && !saving && !draft,
         onMove: movePositions,
         onUnavailable: unavailable,
+        onViewChange: (style) =>
+          document
+            .querySelectorAll("[data-view]")
+            .forEach((button) =>
+              button.setAttribute(
+                "aria-pressed",
+                String(button.dataset.view === style),
+              ),
+            ),
       });
     } catch {
       unavailable();

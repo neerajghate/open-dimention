@@ -115,6 +115,20 @@ export function textSprite(text, color = "#b5beda", scale = 220) {
   s.scale.set(scale, (scale * 96) / 720, 1);
   return s;
 }
+export function surfaceLabel(text, color, width = 430) {
+  const map = texture(720, 96, (ctx) => {
+    ctx.font = "600 32px Segoe UI";
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.fillText(lines(ctx, text, 680, 1)[0] || "", 360, 60);
+  });
+  const label = new THREE.Mesh(
+    new THREE.PlaneGeometry(width, (width * 96) / 720),
+    new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false }),
+  );
+  label.rotation.x = -Math.PI / 2;
+  return label;
+}
 export function dispose(obj) {
   obj.traverse((o) => {
     // Three.js sprites share one geometry; disposing it churns buffers used by

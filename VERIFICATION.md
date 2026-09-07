@@ -1,5 +1,11 @@
 # Verification — Dimention 0.3
 
+## Plane alignment follow-up
+
+The Dim camera now uses an axis-aligned direction with room-aware framing. Desk and Storage share continuous floor columns, a 50-unit grid, and labels oriented on the surface. Added Aligned 3D and Top camera presets. This is a frontend change; saved positions and database content are not migrated.
+
+Browser checks used the existing separate test database: inspected the aligned room and Top view, navigated from sample to Planning while keeping Top selected, focused Main desk, opened Test Note, and returned to 3D. Checked free orbit, returning to Aligned 3D, and the updated production view. Production build and the 24 existing regression tests passed. No browser console errors were reported. These checks do not repeat the earlier 100-item performance measurement below.
+
 September 7, 2026. Windows, Node.js 24.18.0, and the Codex in-app browser at 1280 × 720. Browser writes used `data/organizers-browser-check.sqlite` on port 3100 and `data/organizers-perf.sqlite` on port 3101. The delivered app uses `data/dimention.sqlite` on port 3000.
 
 ## Build and automated checks

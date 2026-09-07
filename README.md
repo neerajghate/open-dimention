@@ -58,6 +58,8 @@ In a document's details, **Lives in** and **Desk or Storage** change its members
 
 ## Arrange the world
 
+**Aligned 3D** centers the camera on the room axes, keeping Desk and Storage columns level. **Top** looks straight down at the X/Z plane; this view stays selected as you navigate between Dims and areas. The room grid has 50-unit spacing to match Snap, and surface labels sit on their planes. Drag to orbit freely; use Aligned 3D to straighten the view again. Camera framing includes the floor and visible documents with room for the toolbar.
+
 | Control         | Behavior                                                                                     |
 | --------------- | -------------------------------------------------------------------------------------------- |
 | Explore         | Click to open; drag empty space to orbit.                                                    |
