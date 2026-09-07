@@ -496,7 +496,7 @@ export function createWorkspaceScene(container, callbacks) {
     // Leave the header, view buttons and bottom toolbar clear of the room.
     const tanY =
       Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) *
-      Math.max(0.35, 1 - 170 / height);
+        Math.max(0.35, 1 - (height < 400 ? 120 : 170) / height);
     const tanX =
       Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect * 0.88;
     let distance = 700;

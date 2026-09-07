@@ -739,13 +739,13 @@ dialog p {
   }
   .dim-focused #canvas-container {
     right: 0;
-    bottom: 48%;
+    bottom: 42%;
   }
   #dim-focus {
-    top: 52%;
+    top: 58%;
     left: 0;
     width: 100%;
-    height: 48%;
+    height: 42%;
     border-left: 0;
     border-top: 1px solid #dce1ec;
   }
@@ -785,7 +785,11 @@ dialog p {
   }
   .dim-focused .view-toolbar {
     left: 50%;
-    bottom: 50%;
+    bottom: calc(42% + 10px);
+    width: max-content;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
     max-width: calc(100% - 20px);
     transform: translateX(-50%);
     padding: 5px;
@@ -801,7 +805,7 @@ dialog p {
     font-size: 9px;
   }
   .dim-focused .selection-bar {
-    bottom: 54%;
+    bottom: calc(42% + 70px);
     max-width: calc(100% - 24px);
     left: 12px;
   }
