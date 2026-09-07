@@ -22,7 +22,7 @@ test("Dims contain Desk and Storage documents while independent documents remain
   const s = createStore(":memory:", { seed: false });
   try {
     const a = s.createNode(dim()),
-      b = s.createNode(dim({ title: "Research" }));
+      b = s.createNode(dim({ title: "Research", x: 2200 }));
     const task = s.createNode({
       type: "workflow",
       title: "Execute",
@@ -31,7 +31,7 @@ test("Dims contain Desk and Storage documents while independent documents remain
       payload: { steps: [{ text: "Ship it", done: false }] },
     });
     const doc = s.createNode(note({ dimId: a.id, area: "storage" })),
-      loose = s.createNode(note());
+      loose = s.createNode(note({ x: -1400 }));
     s.createEdge({ source: a.id, target: b.id, label: "informs" });
     s.createEdge({ source: loose.id, target: a.id });
     assert.equal(task.area, "desk");
@@ -83,7 +83,7 @@ test("Trash restores content, membership, coordinates and connections across res
   });
   const d = s.createNode(dim()),
     doc = s.createNode(note({ dimId: d.id, x: 123, z: -77 })),
-    outside = s.createNode(note());
+    outside = s.createNode(note({ x: -1400 }));
   const edge = s.createEdge({
     source: doc.id,
     target: outside.id,
@@ -118,7 +118,7 @@ test("restoring a child also restores a trashed parent; links stay hidden while 
   try {
     const d = s.createNode(dim()),
       a = s.createNode(note({ dimId: d.id })),
-      b = s.createNode(note());
+      b = s.createNode(note({ x: -1400 }));
     s.createEdge({ source: a.id, target: b.id });
     s.deleteNode(d.id);
     s.deleteNode(b.id);

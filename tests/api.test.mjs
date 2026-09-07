@@ -108,7 +108,7 @@ test("all four types create, update and survive a server restart; export equals 
   assert.deepEqual(graph.nodes, expected);
   assert.deepEqual(graph.edges, [edge.data]);
   const exported = await f.request("/export");
-  assert.equal(exported.data.version, 2);
+  assert.equal(exported.data.version, 3);
   assert.deepEqual(exported.data.nodes, expected);
   assert.deepEqual(exported.data.edges, graph.edges);
   assert.match(exported.headers.get("content-disposition"), /attachment/);
@@ -361,7 +361,7 @@ test("Dim organization, Trash, restore and import HTTP routes persist as one wor
     area: "desk",
   });
   assert.equal(organized.status, 200);
-  assert.equal(organized.data.nodes.find((n) => n.id === doc.id).x, 765);
+  assert.equal(organized.data.nodes.find((n) => n.id === doc.id).x, 595);
   assert.equal(
     (
       await f.request("/positions", "PATCH", {
@@ -395,9 +395,76 @@ test("Dim organization, Trash, restore and import HTTP routes persist as one wor
   );
   assert.equal(
     (await f.request("/workspace")).data.nodes.find((n) => n.id === doc.id).x,
-    865,
+    695,
   );
   const imported = await f.request("/import", "POST", { workspace: exported });
   assert.equal(imported.status, 200);
   assert.equal(imported.data.nodes.length, 4);
+});
+
+test("named-area HTTP create, rename, remove and spatial errors persist correctly", async (t) => {
+  const f = await fixture(t),
+    dim = (
+      await f.request("/nodes", "POST", {
+        type: "dim",
+        title: "My project",
+        x: 1600,
+        y: 0,
+        z: 0,
+      })
+    ).data;
+  const created = await f.request(`/dims/${dim.id}/zones`, "POST", {
+    type: "desk",
+    name: "Execution",
+  });
+  assert.equal(created.status, 201);
+  const id = created.data.zone.id;
+  const n = (
+    await f.request("/nodes", "POST", {
+      ...node(),
+      dimId: dim.id,
+      zoneId: id,
+      autoPlace: true,
+    })
+  ).data;
+  assert.equal(n.zoneId, id);
+  assert.equal(n.area, "desk");
+  assert.equal(
+    (
+      await f.request(`/dims/${dim.id}/zones/${id}`, "PATCH", {
+        name: "Next actions",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await f.request(`/dims/${dim.id}/zones`, "POST", {
+        type: "desk",
+        name: "Next actions",
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (await f.request("/nodes/" + n.id, "PATCH", { x: 0 })).status,
+    400,
+  );
+  assert.equal(
+    (
+      await f.request(`/dims/${dim.id}/zones/${id}`, "DELETE", {
+        replacementId: "storage",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await f.request(`/dims/${dim.id}/zones/missing`, "PATCH", { name: "Bad" }))
+      .status,
+    400,
+  );
+  await f.restart();
+  const graph = (await f.request("/workspace")).data;
+  assert.equal(graph.nodes.find((d) => d.id === n.id).zoneId, "storage");
+  assert.equal(graph.nodes.find((d) => d.id === n.id).content, node().content);
 });

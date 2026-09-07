@@ -84,6 +84,26 @@ export async function createAppServer({
           });
         if (req.method === "GET" && pathname === "/api/trash")
           return json(res, 200, store.trash());
+        const zoneRoute = pathname.match(
+          /^\/api\/dims\/([^/]+)\/zones(?:\/([^/]+))?$/,
+        );
+        if (zoneRoute) {
+          const [, dimId, zoneId] = zoneRoute;
+          if (req.method === "POST" && !zoneId)
+            return json(res, 201, store.createZone(dimId, await body(req)));
+          if (req.method === "PATCH" && zoneId)
+            return json(
+              res,
+              200,
+              store.renameZone(dimId, zoneId, await body(req)),
+            );
+          if (req.method === "DELETE" && zoneId)
+            return json(
+              res,
+              200,
+              store.removeZone(dimId, zoneId, await body(req)),
+            );
+        }
         if (req.method === "POST" && pathname === "/api/import") {
           const input = await body(req, 32 * 1024 * 1024);
           return json(

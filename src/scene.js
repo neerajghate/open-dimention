@@ -1,216 +1,76 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-export const palette = {
-  note: "#699fff",
-  idea: "#ecad62",
-  workflow: "#a496ff",
-  table: "#58b8c9",
-  dim: "#8580ff",
-};
-export const typeNames = {
-  note: "Note",
-  idea: "Idea",
-  workflow: "Workflow",
-  table: "Table",
-  dim: "Dim",
-};
-export function preview(n) {
-  if (n.type === "workflow")
-    return (n.payload.steps || [])
-      .map((s) => `${s.done ? "✓" : "○"} ${s.text}`)
-      .join("\n");
-  if (n.type === "table")
-    return `${n.payload.columns.join(" · ")}\n${n.payload.rows.length} rows · ${n.content}`;
-  return n.content;
-}
-function lines(ctx, text, width, max) {
-  const result = [];
-  let line = "";
-  for (const word of String(text).split(/\s+/)) {
-    if (ctx.measureText(line + word).width > width && line) {
-      result.push(line.trim());
-      line = "";
-    }
-    line += word + " ";
-  }
-  if (line.trim()) result.push(line.trim());
-  return result.slice(0, max).map((s, i) => {
-    if (i === max - 1 && result.length > max) s += "…";
-    while (ctx.measureText(s).width > width && s.length > 1)
-      s = s.slice(0, -2) + "…";
-    return s;
-  });
-}
-function texture(width, height, draw) {
-  const c = document.createElement("canvas");
-  c.width = width;
-  c.height = height;
-  draw(c.getContext("2d"));
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-function card(n, selected, count) {
-  return texture(720, 380, (ctx) => {
-    const dim = n.type === "dim",
-      color = dim ? n.payload.color : palette[n.type];
-    ctx.fillStyle = dim ? "#252b45" : "#f9faff";
-    ctx.beginPath();
-    ctx.roundRect(8, 8, 704, 360, 23);
-    ctx.fill();
-    ctx.lineWidth = selected ? 7 : 2;
-    ctx.strokeStyle = selected ? "#a79fff" : dim ? color : "#d7dcec";
-    ctx.stroke();
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.roundRect(38, 38, 11, 25, 4);
-    ctx.fill();
-    ctx.font = "600 23px Segoe UI";
-    ctx.fillText(
-      dim ? "DIM / YOUR ROOM" : typeNames[n.type].toUpperCase(),
-      65,
-      60,
-    );
-    ctx.fillStyle = dim ? "#ffffff" : "#20273c";
-    ctx.font = "600 42px Segoe UI";
-    const title = lines(ctx, n.title, 630, 2);
-    title.forEach((s, i) => ctx.fillText(s, 38, 119 + i * 46));
-    ctx.fillStyle = dim ? "#b5bdd5" : "#737c95";
-    ctx.font = "28px Segoe UI";
-    lines(
-      ctx,
-      dim
-        ? `${count} documents · Desk & Storage`
-        : preview(n) || "Room for a new thought.",
-      630,
-      2,
-    ).forEach((s, i) =>
-      ctx.fillText(s, 38, (title.length > 1 ? 213 : 182) + i * 37),
-    );
-    ctx.fillStyle = dim ? "#a4adcc" : "#969db1";
-    ctx.font = "22px Segoe UI";
-    ctx.fillText(
-      dim
-        ? "Enter Dim  ↗"
-        : n.dimId
-          ? `${n.area === "desk" ? "DESK" : "STORAGE"} · Click to open`
-          : "INDEPENDENT · Click to open",
-      38,
-      336,
-    );
-  });
-}
-function textSprite(text, color = "#b5beda", scale = 220) {
-  const t = texture(720, 96, (ctx) => {
-    ctx.font = "600 36px Segoe UI";
-    ctx.fillStyle = color;
-    ctx.textAlign = "center";
-    ctx.fillText(lines(ctx, text, 680, 1)[0] || "", 360, 61);
-  });
-  const s = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true }),
+import { card, textSprite, dispose, preview } from "./scene-art.js";
+import { ROOM, zonesOf, zoneCenter, layoutProblem } from "../shared/spatial.js";
+export { palette, typeNames, preview } from "./scene-art.js";
+
+function room(dim) {
+  const group = new THREE.Group(),
+    color = dim.payload.color;
+  const floorGeometry = new THREE.BoxGeometry(
+    ROOM.halfWidth * 2,
+    8,
+    ROOM.halfDepth * 2,
   );
-  s.scale.set(scale, (scale * 96) / 720, 1);
-  return s;
-}
-function dispose(obj) {
-  obj.traverse((o) => {
-    o.geometry?.dispose();
-    for (const m of o.material
-      ? Array.isArray(o.material)
-        ? o.material
-        : [o.material]
-      : []) {
-      m.map?.dispose();
-      m.dispose();
-    }
-  });
-}
-function room(n) {
-  const g = new THREE.Group(),
-    color = n.payload.color;
   const floor = new THREE.Mesh(
-    new THREE.BoxGeometry(960, 6, 670),
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.07,
-      depthWrite: false,
-    }),
+    floorGeometry,
+    new THREE.MeshBasicMaterial({ color: "#1d263c" }),
   );
-  floor.position.y = -120;
-  g.add(floor);
-  const outline = new THREE.LineSegments(
-    new THREE.EdgesGeometry(new THREE.BoxGeometry(960, 6, 670)),
-    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.6 }),
+  floor.position.y = -110;
+  group.add(floor);
+  const border = new THREE.LineSegments(
+    new THREE.EdgesGeometry(floorGeometry),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.75 }),
   );
-  outline.position.copy(floor.position);
-  g.add(outline);
-  g.add(
-    new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(
-        [
-          [-480, -116, -335],
-          [-480, 160, -335],
-          [480, 160, -335],
-          [480, -116, -335],
-        ].map((p) => new THREE.Vector3(...p)),
-      ),
-      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.24 }),
-    ),
-  );
-  const divider = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, -113, -300),
-      new THREE.Vector3(0, -113, 300),
-    ]),
-    new THREE.LineDashedMaterial({
-      color: "#9aa3c1",
-      dashSize: 12,
-      gapSize: 12,
-      transparent: true,
-      opacity: 0.35,
-    }),
-  );
-  divider.computeLineDistances();
-  g.add(divider);
-  for (const [label, x] of [
-    ["DESK / EXECUTE", -240],
-    ["STORAGE / COLLECT", 240],
-  ]) {
-    const s = textSprite(label, color, 240);
-    s.position.set(x, -105, 285);
-    g.add(s);
-    const desk = new THREE.Mesh(
-      new THREE.BoxGeometry(260, 20, 145),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.13 }),
+  border.position.y = -110;
+  group.add(border);
+  const hits = [];
+  for (const zone of zonesOf(dim)) {
+    const p = zoneCenter({ ...dim, x: 0, y: 0, z: 0 }, zone.id),
+      tile = new THREE.Mesh(
+        new THREE.BoxGeometry(525, 10, 204),
+        new THREE.MeshBasicMaterial({
+          color: zone.type === "desk" ? "#3b3864" : "#254d60",
+        }),
+      );
+    tile.position.set(p.x, -98, p.z);
+    tile.userData.zone = { dimId: dim.id, zoneId: zone.id };
+    group.add(tile);
+    hits.push(tile);
+    const label = textSprite(
+      `${zone.type === "desk" ? "DESK" : "STORAGE"} / ${zone.name}`,
+      zone.type === "desk" ? "#d0c8ff" : "#a5d9e9",
+      430,
     );
-    desk.position.set(x, -103, 0);
-    g.add(desk);
+    label.position.set(p.x, -76, p.z + 72);
+    label.userData.zone = tile.userData.zone;
+    group.add(label);
+    hits.push(label);
   }
-  g.position.set(n.x, n.y, n.z);
-  return g;
+  group.position.set(dim.x, dim.y, dim.z);
+  return { group, hits };
 }
+
 export function createWorkspaceScene(container, callbacks) {
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
-    powerPreference: "low-power",
+    powerPreference: "default",
   });
   renderer.setClearColor("#121724");
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   const canvas = renderer.domElement;
   canvas.tabIndex = 0;
   canvas.setAttribute(
     "aria-label",
-    "3D world. Use the sidebar for keyboard access to all items.",
+    "3D world. Use the quick access sidebar to navigate Dims.",
   );
   container.append(canvas);
   const world = new THREE.Scene(),
-    camera = new THREE.PerspectiveCamera(43, 1, 1, 40000);
-  camera.position.set(650, 630, 1800);
-  const controls = new OrbitControls(camera, canvas);
+    camera = new THREE.PerspectiveCamera(43, 1, 1, 40000),
+    controls = new OrbitControls(camera, canvas);
+  camera.position.set(650, 900, 1800);
   controls.enableDamping = false;
-  controls.minDistance = 180;
+  controls.minDistance = 250;
   controls.maxDistance = 26000;
   controls.screenSpacePanning = true;
   controls.mouseButtons = {
@@ -218,112 +78,227 @@ export function createWorkspaceScene(container, callbacks) {
     MIDDLE: THREE.MOUSE.PAN,
     RIGHT: THREE.MOUSE.PAN,
   };
-  const grid = new THREE.GridHelper(14000, 140, "#313d59", "#232c40");
-  grid.position.y = -340;
+  const grid = new THREE.GridHelper(14000, 100, "#35425d", "#222d43");
+  grid.position.y = -180;
   grid.material.transparent = true;
-  grid.material.opacity = 0.6;
+  grid.material.opacity = 0.42;
   world.add(grid);
-  let frame = 0,
-    nodes = [],
+  const sprites = new Map(),
+    rooms = new Map(),
+    links = new Map();
+  let nodes = [],
     edges = [],
     selected = new Set(),
+    view = {},
+    lastNodes,
+    lastEdges,
+    lastSelection = "",
+    lastView = "",
     mode = "select",
     axis = "screen",
     snap = false,
     gesture = null,
-    linkGroup = new THREE.Group(),
-    edgeHits = [];
-  world.add(linkGroup);
-  const sprites = new Map(),
-    rooms = new Map();
-  function render() {
-    if (!frame)
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        renderer.render(world, camera);
-      });
+    frame = 0,
+    tween = null,
+    paused = false,
+    linksDirty = false,
+    renderCount = 0,
+    textureBuilds = 0,
+    edgeBuilds = 0;
+  const isVisible = (n) =>
+    !view.dimId ||
+    n.id === view.dimId ||
+    (n.dimId === view.dimId && (!view.zoneId || n.zoneId === view.zoneId));
+  const visibleSprites = () => [...sprites.values()].filter((s) => s.visible);
+  const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function schedule() {
+    if (!frame && !paused && !document.hidden)
+      frame = requestAnimationFrame(draw);
   }
-  controls.addEventListener("change", render);
+  function draw(now) {
+    frame = 0;
+    if (tween) {
+      tween.frames++;
+      tween.firstFrame ??= now;
+      const p = Math.min(1, (now - tween.start) / tween.duration),
+        t = 1 - (1 - p) ** 3;
+      camera.position.lerpVectors(tween.from, tween.to, t);
+      controls.target.lerpVectors(tween.targetFrom, tween.targetTo, t);
+      controls.update();
+      if (p === 1) {
+        if (import.meta.env.DEV && tween.frames > 1)
+          canvas.dataset.cameraFps = (
+            ((tween.frames - 1) * 1000) /
+            (now - tween.firstFrame)
+          ).toFixed(1);
+        tween = null;
+      }
+    }
+    if (linksDirty) {
+      updateLinks();
+      linksDirty = false;
+    }
+    const cpuStart = performance.now();
+    renderer.render(world, camera);
+    renderCount++;
+    if (import.meta.env.DEV) {
+      canvas.dataset.renderMs = (performance.now() - cpuStart).toFixed(2);
+      canvas.dataset.renderCount = renderCount;
+      canvas.dataset.textureBuilds = textureBuilds;
+      canvas.dataset.edgeBuilds = edgeBuilds;
+      canvas.dataset.textures = renderer.info.memory.textures;
+      canvas.dataset.geometries = renderer.info.memory.geometries;
+      canvas.dataset.drawCalls = renderer.info.render.calls;
+    }
+    if (tween) schedule();
+  }
+  controls.addEventListener("change", schedule);
+  controls.addEventListener("start", () => {
+    tween = null;
+  });
   const resize = () => {
     const r = container.getBoundingClientRect();
     if (!r.width || !r.height) return;
     renderer.setSize(r.width, r.height);
     camera.aspect = r.width / r.height;
     camera.updateProjectionMatrix();
-    render();
+    schedule();
   };
   const observer = new ResizeObserver(resize);
   observer.observe(container);
   resize();
-  function drawEdges() {
-    world.remove(linkGroup);
-    dispose(linkGroup);
-    linkGroup = new THREE.Group();
-    world.add(linkGroup);
-    edgeHits = [];
+  const visibility = () => {
+    if (document.hidden) {
+      cancelAnimationFrame(frame);
+      frame = 0;
+    } else schedule();
+  };
+  document.addEventListener("visibilitychange", visibility);
+
+  function updateLinks() {
+    const ids = new Set(edges.map((e) => e.id)),
+      pairs = new Set(edges.map((e) => `${e.source}:${e.target}`));
+    for (const [id, link] of links)
+      if (!ids.has(id)) {
+        world.remove(link.group);
+        dispose(link.group);
+        links.delete(id);
+      }
     for (const e of edges) {
-      const source = sprites.get(e.source),
-        target = sprites.get(e.target);
-      if (!source || !target) continue;
-      const a = source.position,
-        b = target.position,
-        delta = b.clone().sub(a);
-      if (delta.length() < 1) continue;
-      const mid = a.clone().lerp(b, 0.5);
-      let normal = new THREE.Vector3()
-        .crossVectors(delta, new THREE.Vector3(0, 1, 0))
-        .normalize();
+      const a = sprites.get(e.source),
+        b = sprites.get(e.target);
+      if (!a || !b) continue;
+      let link = links.get(e.id);
+      if (!link) {
+        const group = new THREE.Group(),
+          line = new THREE.Line(
+            new THREE.BufferGeometry().setAttribute(
+              "position",
+              new THREE.BufferAttribute(new Float32Array(33 * 3), 3),
+            ),
+            new THREE.LineBasicMaterial({ transparent: true }),
+          );
+        const arrow = new THREE.Mesh(
+          new THREE.ConeGeometry(8, 24, 8),
+          new THREE.MeshBasicMaterial(),
+        );
+        group.add(line, arrow);
+        world.add(group);
+        line.userData.edge = e.id;
+        link = {
+          group,
+          line,
+          arrow,
+          label: null,
+          labelKey: "",
+          positionKey: "",
+          active: null,
+        };
+        links.set(e.id, link);
+        edgeBuilds++;
+      }
+      link.group.visible = a.visible && b.visible;
+      if (!link.group.visible) continue;
+      const active = selected.has(e.source) || selected.has(e.target),
+        color = active ? "#c9beff" : "#7889ad";
+      if (link.active !== active) {
+        link.line.material.color.set(color);
+        link.line.material.opacity = active ? 0.95 : 0.55;
+        link.arrow.material.color.set(color);
+        link.active = active;
+      }
+      const labelKey = e.label || "Open connection";
+      if (link.labelKey !== labelKey) {
+        if (link.label) {
+          link.group.remove(link.label);
+          dispose(link.label);
+        }
+        link.label = textSprite(labelKey + " →", "#b9c6df", 170);
+        link.label.userData.edge = e.id;
+        link.group.add(link.label);
+        link.labelKey = labelKey;
+        textureBuilds++;
+        link.positionKey = "";
+      }
+      const posKey = [
+        ...a.position,
+        ...b.position,
+        pairs.has(`${e.target}:${e.source}`),
+      ].join(",");
+      if (link.positionKey === posKey) continue;
+      link.positionKey = posKey;
+      const delta = b.position.clone().sub(a.position),
+        normal = new THREE.Vector3()
+          .crossVectors(delta, new THREE.Vector3(0, 1, 0))
+          .normalize();
       if (!normal.lengthSq()) normal.set(1, 0, 0);
-      mid.addScaledVector(
-        normal,
-        edges.some((o) => o.source === e.target && o.target === e.source)
-          ? 110
-          : 30,
-      );
-      const curve = new THREE.QuadraticBezierCurve3(a, mid, b),
-        active = selected.has(e.source) || selected.has(e.target),
-        color = active ? "#b2a3ff" : "#687796";
-      const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints(curve.getPoints(32)),
-        new THREE.LineBasicMaterial({
-          color,
-          transparent: true,
-          opacity: active ? 0.95 : 0.62,
-        }),
-      );
-      line.userData.edge = e.id;
-      linkGroup.add(line);
-      edgeHits.push(line);
-      const cone = new THREE.Mesh(
-        new THREE.ConeGeometry(active ? 10 : 8, 25, 10),
-        new THREE.MeshBasicMaterial({ color }),
-      );
-      cone.position.copy(curve.getPoint(0.7));
-      cone.quaternion.setFromUnitVectors(
+      const mid = a.position
+          .clone()
+          .lerp(b.position, 0.5)
+          .addScaledVector(
+            normal,
+            pairs.has(`${e.target}:${e.source}`) ? 110 : 35,
+          ),
+        curve = new THREE.QuadraticBezierCurve3(a.position, mid, b.position),
+        attribute = link.line.geometry.attributes.position,
+        p = new THREE.Vector3();
+      for (let i = 0; i <= 32; i++) {
+        curve.getPoint(i / 32, p);
+        attribute.setXYZ(i, p.x, p.y, p.z);
+      }
+      attribute.needsUpdate = true;
+      link.line.geometry.computeBoundingSphere();
+      link.arrow.position.copy(curve.getPoint(0.72));
+      link.arrow.quaternion.setFromUnitVectors(
         new THREE.Vector3(0, 1, 0),
-        curve.getTangent(0.7).normalize(),
+        curve.getTangent(0.72).normalize(),
       );
-      linkGroup.add(cone);
-      const label = textSprite(
-        `${e.label || "Open connection"}  →`,
-        active ? "#dbd5ff" : "#9daac6",
-        180,
-      );
-      label.position.copy(curve.getPoint(0.47));
-      label.position.y += 18;
-      label.userData.edge = e.id;
-      linkGroup.add(label);
-      edgeHits.push(label);
+      link.label.position.copy(curve.getPoint(0.45));
+      link.label.position.y += 20;
     }
-    render();
   }
-  function update(nextNodes, nextEdges, nextSelected = []) {
+  function update(nextNodes, nextEdges, nextSelected = [], nextView = {}) {
+    const selectionKey = [...nextSelected].sort().join(","),
+      viewKey = JSON.stringify(nextView);
+    if (
+      lastNodes === nextNodes &&
+      lastEdges === nextEdges &&
+      lastSelection === selectionKey &&
+      lastView === viewKey
+    )
+      return;
+    lastNodes = nextNodes;
+    lastEdges = nextEdges;
+    lastSelection = selectionKey;
+    lastView = viewKey;
     nodes = nextNodes;
     edges = nextEdges;
-    selected = new Set(
-      Array.isArray(nextSelected) ? nextSelected : [nextSelected],
-    );
-    const ids = new Set(nodes.map((n) => n.id));
+    selected = new Set(nextSelected);
+    view = nextView;
+    const ids = new Set(nodes.map((n) => n.id)),
+      counts = new Map();
+    for (const n of nodes)
+      if (n.dimId) counts.set(n.dimId, (counts.get(n.dimId) || 0) + 1);
     for (const [id, s] of sprites)
       if (!ids.has(id)) {
         world.remove(s);
@@ -332,8 +307,8 @@ export function createWorkspaceScene(container, callbacks) {
       }
     for (const [id, r] of rooms)
       if (!ids.has(id)) {
-        world.remove(r);
-        dispose(r);
+        world.remove(r.group);
+        dispose(r.group);
         rooms.delete(id);
       }
     for (const n of nodes) {
@@ -342,50 +317,85 @@ export function createWorkspaceScene(container, callbacks) {
         s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
         s.userData.id = n.id;
         s.scale.set(
-          n.type === "dim" ? 350 : 260,
-          n.type === "dim" ? 185 : 137,
+          n.type === "dim" ? 360 : 240,
+          n.type === "dim" ? 190 : 127,
           1,
         );
         world.add(s);
         sprites.set(n.id, s);
       }
-      const count = nodes.filter((c) => c.dimId === n.id).length,
-        signature = JSON.stringify(n) + selected.has(n.id) + count;
+      const signature = [
+        n.title,
+        n.type,
+        preview(n).slice(0, 360),
+        n.area,
+        n.dimId,
+        n.payload.color,
+        counts.get(n.id) || 0,
+        selected.has(n.id),
+      ].join("|");
       if (s.userData.signature !== signature) {
         s.material.map?.dispose();
-        s.material.map = card(n, selected.has(n.id), count);
+        s.material.map = card(n, selected.has(n.id), counts.get(n.id) || 0);
         s.material.needsUpdate = true;
         s.userData.signature = signature;
+        textureBuilds++;
       }
+      s.visible = isVisible(n);
       s.position.set(
         n.x,
-        n.y + (n.type === "dim" ? 210 : 0),
-        n.z + (n.type === "dim" ? -235 : 0),
+        n.y + (n.type === "dim" ? 255 : 0),
+        n.z + (n.type === "dim" ? -515 : 0),
       );
       if (n.type === "dim") {
+        const roomKey = JSON.stringify(n.payload);
         let r = rooms.get(n.id);
-        if (!r || r.userData.color !== n.payload.color) {
+        if (!r || r.key !== roomKey) {
           if (r) {
-            world.remove(r);
-            dispose(r);
+            world.remove(r.group);
+            dispose(r.group);
           }
-          r = room(n);
-          r.userData.color = n.payload.color;
+          r = { ...room(n), key: roomKey };
           rooms.set(n.id, r);
-          world.add(r);
+          world.add(r.group);
+          textureBuilds += zonesOf(n).length;
         }
-        r.position.set(n.x, n.y, n.z);
+        r.group.position.set(n.x, n.y, n.z);
+        r.group.visible = !view.dimId || view.dimId === n.id;
       }
     }
-    drawEdges();
+    grid.position.y =
+      (view.dimId ? nodes.find((n) => n.id === view.dimId)?.y || 0 : 0) - 180;
+    linksDirty = true;
+    schedule();
+  }
+  function fly(target, position, animate = true) {
+    if (!animate || reduced()) {
+      tween = null;
+      camera.position.copy(position);
+      controls.target.copy(target);
+      controls.update();
+      schedule();
+      return;
+    }
+    tween = {
+      from: camera.position.clone(),
+      to: position,
+      targetFrom: controls.target.clone(),
+      targetTo: target,
+      start: performance.now(),
+      duration: 440,
+      frames: 0,
+    };
+    schedule();
   }
   function fit(reset = false) {
     const points = [];
-    for (const n of nodes) {
+    for (const n of nodes.filter(isVisible)) {
       if (n.type === "dim") {
-        for (const x of [-500, 500])
-          for (const y of [-130, 320])
-            for (const z of [-350, 350])
+        for (const x of [-620, 620])
+          for (const z of [-580, 580])
+            for (const y of [-130, 380])
               points.push(new THREE.Vector3(n.x + x, n.y + y, n.z + z));
       } else points.push(new THREE.Vector3(n.x, n.y, n.z));
     }
@@ -397,12 +407,12 @@ export function createWorkspaceScene(container, callbacks) {
       );
     const center = bounds.getCenter(new THREE.Vector3()),
       direction = reset
-        ? new THREE.Vector3(0.28, 0.25, 1).normalize()
+        ? new THREE.Vector3(0.25, 0.55, 1).normalize()
         : camera.position.clone().sub(controls.target).normalize(),
       right = new THREE.Vector3()
         .crossVectors(camera.up, direction)
         .normalize(),
-      up = new THREE.Vector3().crossVectors(direction, right).normalize(),
+      up = new THREE.Vector3().crossVectors(direction, right),
       tanY = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2),
       tanX = tanY * camera.aspect;
     let distance = 700;
@@ -410,32 +420,35 @@ export function createWorkspaceScene(container, callbacks) {
       const d = p.clone().sub(center);
       distance = Math.max(
         distance,
-        d.dot(direction) + (Math.abs(d.dot(right)) + 155) / tanX,
-        d.dot(direction) + (Math.abs(d.dot(up)) + 135) / tanY,
+        d.dot(direction) + (Math.abs(d.dot(right)) + 145) / tanX,
+        d.dot(direction) + (Math.abs(d.dot(up)) + 110) / tanY,
       );
     }
-    distance = Math.min(26000, distance * 1.17);
-    controls.target.copy(center);
-    camera.position.copy(center).addScaledVector(direction, distance);
-    controls.update();
-    render();
+    fly(
+      center,
+      center
+        .clone()
+        .addScaledVector(direction, Math.min(26000, distance * 1.12)),
+      !reset,
+    );
   }
-  function focus(id) {
+  function focus(id, zoneId = null, animate = true) {
     const n = nodes.find((n) => n.id === id);
     if (!n) return;
-    const target = new THREE.Vector3(n.x, n.y, n.z),
-      direction = camera.position.clone().sub(controls.target).normalize();
-    controls.target.copy(target);
-    camera.position
-      .copy(target)
-      .addScaledVector(direction, n.type === "dim" ? 1400 : 850);
-    controls.update();
-    render();
+    resize();
+    const p = zoneId ? zoneCenter(n, zoneId) : n,
+      target = new THREE.Vector3(p.x, p.y + 30, p.z),
+      direction = new THREE.Vector3(0.13, 0.75, 1).normalize();
+    const distance =
+      n.type === "dim" && !zoneId
+        ? Math.max(1900, 1500 / Math.max(0.65, camera.aspect))
+        : 1000;
+    fly(target, target.clone().addScaledVector(direction, distance), animate);
   }
   function rect(id) {
     const s = sprites.get(id),
       r = canvas.getBoundingClientRect();
-    if (!s)
+    if (!s || !s.visible)
       return {
         x: r.x + r.width / 2 - 80,
         y: r.y + r.height / 2 - 50,
@@ -455,9 +468,9 @@ export function createWorkspaceScene(container, callbacks) {
       height: h,
     };
   }
-  const raycaster = new THREE.Raycaster();
-  raycaster.params.Line.threshold = 12;
-  const pointer = new THREE.Vector2();
+  const raycaster = new THREE.Raycaster(),
+    pointer = new THREE.Vector2();
+  raycaster.params.Line.threshold = 10;
   function ray(e) {
     const r = canvas.getBoundingClientRect();
     pointer.set(
@@ -470,14 +483,26 @@ export function createWorkspaceScene(container, callbacks) {
   canvas.addEventListener(
     "pointerdown",
     (e) => {
+      tween = null;
       if (e.button !== 0 || mode === "pan") return;
       const caster = ray(e),
-        hit = caster.intersectObjects([...sprites.values()])[0];
+        hit = caster.intersectObjects(visibleSprites())[0];
       if (!hit) {
-        const edge = caster.intersectObjects(edgeHits)[0];
-        if (edge) {
+        const targets = [...links.values()]
+          .filter((l) => l.group.visible)
+          .flatMap((l) => [l.line, l.label].filter(Boolean));
+        if (mode === "select")
+          targets.push(
+            ...[...rooms.values()]
+              .filter((r) => r.group.visible)
+              .flatMap((r) => r.hits),
+          );
+        const target = caster.intersectObjects(targets)[0];
+        if (target) {
           e.stopImmediatePropagation();
-          callbacks.onEdge(edge.object.userData.edge);
+          const data = target.object.userData;
+          if (data.edge) callbacks.onEdge(data.edge);
+          else if (data.zone) callbacks.onZone?.(data.zone);
         }
         return;
       }
@@ -506,6 +531,7 @@ export function createWorkspaceScene(container, callbacks) {
         affected: nodes.filter((n) => ids.has(n.id) || ids.has(n.dimId)),
         moved: false,
         delta: new THREE.Vector3(),
+        blocked: null,
       };
       controls.enabled = false;
       canvas.setPointerCapture(e.pointerId);
@@ -540,24 +566,38 @@ export function createWorkspaceScene(container, callbacks) {
       }
       for (const key of ["x", "y", "z"]) {
         delta[key] = Math.round(delta[key] / (snap ? 50 : 1)) * (snap ? 50 : 1);
-        const low = Math.max(...gesture.affected.map((n) => -5000 - n[key])),
-          high = Math.min(...gesture.affected.map((n) => 5000 - n[key]));
-        delta[key] = THREE.MathUtils.clamp(delta[key], low, high);
+        delta[key] = THREE.MathUtils.clamp(
+          delta[key],
+          Math.max(...gesture.affected.map((n) => -5000 - n[key])),
+          Math.min(...gesture.affected.map((n) => 5000 - n[key])),
+        );
       }
+      const affected = new Set(gesture.affected.map((n) => n.id));
+      const problem = layoutProblem(
+        nodes.map((n) =>
+          affected.has(n.id)
+            ? { ...n, x: n.x + delta.x, y: n.y + delta.y, z: n.z + delta.z }
+            : n,
+        ),
+      );
+      gesture.blocked = problem;
+      canvas.style.cursor = problem ? "not-allowed" : "grabbing";
+      if (problem) return;
       gesture.delta.copy(delta);
       for (const n of gesture.affected) {
         sprites
           .get(n.id)
           ?.position.set(
             n.x + delta.x,
-            n.y + delta.y + (n.type === "dim" ? 210 : 0),
-            n.z + delta.z + (n.type === "dim" ? -235 : 0),
+            n.y + delta.y + (n.type === "dim" ? 255 : 0),
+            n.z + delta.z + (n.type === "dim" ? -515 : 0),
           );
         rooms
           .get(n.id)
-          ?.position.set(n.x + delta.x, n.y + delta.y, n.z + delta.z);
+          ?.group.position.set(n.x + delta.x, n.y + delta.y, n.z + delta.z);
       }
-      drawEdges();
+      linksDirty = true;
+      schedule();
     },
     true,
   );
@@ -567,22 +607,26 @@ export function createWorkspaceScene(container, callbacks) {
     const g = gesture;
     gesture = null;
     controls.enabled = true;
+    canvas.style.cursor = mode === "move" ? "grab" : "default";
     if (canvas.hasPointerCapture(e.pointerId))
       canvas.releasePointerCapture(e.pointerId);
     if (cancel) {
-      update(nodes, edges, [...selected]);
+      lastNodes = null;
+      update(nodes, edges, [...selected], view);
       return;
     }
-    if (g.moved && mode === "move")
-      callbacks.onMove(
-        g.primary.map((n) => ({
-          id: n.id,
-          x: n.x + g.delta.x,
-          y: n.y + g.delta.y,
-          z: n.z + g.delta.z,
-        })),
-      );
-    else if (!g.moved) callbacks.onSelect(g.id);
+    if (g.moved && mode === "move") {
+      if (g.delta.lengthSq())
+        callbacks.onMove(
+          g.primary.map((n) => ({
+            id: n.id,
+            x: n.x + g.delta.x,
+            y: n.y + g.delta.y,
+            z: n.z + g.delta.z,
+          })),
+        );
+      if (g.blocked) callbacks.onBlocked?.(g.blocked);
+    } else if (!g.moved) callbacks.onSelect(g.id);
   }
   canvas.addEventListener("pointerup", (e) => end(e), true);
   canvas.addEventListener("pointercancel", (e) => end(e, true), true);
@@ -608,6 +652,14 @@ export function createWorkspaceScene(container, callbacks) {
             ? "crosshair"
             : "default";
     },
+    setPaused(value) {
+      if (paused === value) return;
+      paused = value;
+      if (paused) {
+        cancelAnimationFrame(frame);
+        frame = 0;
+      } else schedule();
+    },
     getTarget() {
       return {
         x: Math.round(controls.target.x),
@@ -615,8 +667,12 @@ export function createWorkspaceScene(container, callbacks) {
         z: Math.round(controls.target.z),
       };
     },
+    invalidate() {
+      lastNodes = null;
+    },
     dispose() {
       observer.disconnect();
+      document.removeEventListener("visibilitychange", visibility);
       controls.dispose();
       cancelAnimationFrame(frame);
       dispose(world);

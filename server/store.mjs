@@ -2,6 +2,16 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import {
+  defaultZones,
+  zonesOf,
+  zoneOf,
+  slotPosition,
+  layoutProblem,
+  positionProblem,
+  freePosition,
+  planSpatialLayout,
+} from "../shared/spatial.js";
 
 export const TYPES = ["note", "idea", "workflow", "table", "dim"];
 export class ApiError extends Error {
@@ -42,7 +52,34 @@ function validateNode(input) {
   if (input.type === "dim") {
     const color = payload.color ?? "#7c83ff";
     if (!/^#[0-9a-f]{6}$/i.test(color)) fail("Choose a valid Dim color.");
-    cleanPayload = { color };
+    const zones = payload.zones ?? defaultZones();
+    if (!Array.isArray(zones) || zones.length < 2 || zones.length > 8)
+      fail("A Dim supports up to four Desks and four Storage areas.");
+    const ids = new Set(),
+      names = new Set();
+    cleanPayload = {
+      color,
+      zones: zones.map((z) => {
+        if (!z || !["desk", "storage"].includes(z.type))
+          fail("Choose Desk or Storage.");
+        const id = string(z.id, "Area ID", 100),
+          name = string(z.name, "Area name", 60).trim();
+        if (!/^[a-zA-Z0-9_-]+$/.test(id) || ids.has(id))
+          fail("Area IDs must be valid and unique.");
+        if (!name || names.has(z.type + name.toLowerCase()))
+          fail(
+            "Give each Desk or Storage a unique, nonempty name within its type.",
+          );
+        ids.add(id);
+        names.add(z.type + name.toLowerCase());
+        return { id, name, type: z.type };
+      }),
+    };
+    for (const type of ["desk", "storage"]) {
+      const count = zones.filter((z) => z.type === type).length;
+      if (count < 1 || count > 4)
+        fail("Keep one to four areas of each type in a Dim.");
+    }
   }
   if (input.type === "workflow") {
     const steps =
@@ -98,6 +135,7 @@ function validateNode(input) {
     payload: cleanPayload,
     dimId,
     area,
+    zoneId: input.zoneId == null ? null : string(input.zoneId, "Area ID", 100),
   };
 }
 
@@ -198,6 +236,7 @@ export function createStore(path, { seed = true } = {}) {
     ["area", "TEXT NOT NULL DEFAULT 'storage'"],
     ["deletedAt", "TEXT"],
     ["deleteBatch", "TEXT"],
+    ["zoneId", "TEXT"],
   ]) {
     if (!columns.has(name))
       db.exec(`ALTER TABLE nodes ADD COLUMN ${name} ${definition}`);
@@ -225,12 +264,34 @@ export function createStore(path, { seed = true } = {}) {
     if (n.dimId !== null) {
       const dim = active(n.dimId);
       if (dim.type !== "dim") fail("Documents can only belong to a Dim.");
+      const zone =
+        n.zoneId == null
+          ? zoneOf(dim, null, n.area)
+          : zonesOf(dim).find((z) => z.id === n.zoneId);
+      if (!zone) fail("Choose a Desk or Storage in this Dim.");
+      n.zoneId = zone.id;
+      n.area = zone.type;
+    } else {
+      n.zoneId = null;
     }
   };
   const transaction = (action) => {
     db.exec("BEGIN IMMEDIATE");
     try {
       const result = action();
+      const problem = layoutProblem(graph().nodes);
+      if (problem) fail(problem);
+      for (const n of db
+        .prepare("SELECT * FROM nodes WHERE dimId IS NOT NULL")
+        .all()
+        .map(parse)) {
+        const parent = getNode(n.dimId),
+          zone = zonesOf(parent).find((z) => z.id === n.zoneId);
+        if (!parent || parent.type !== "dim" || !zone || zone.type !== n.area)
+          fail(
+            "Move documents to another area before removing their Desk or Storage.",
+          );
+      }
       db.exec("COMMIT");
       return result;
     } catch (error) {
@@ -256,7 +317,7 @@ export function createStore(path, { seed = true } = {}) {
     validDim(n);
     const now = new Date().toISOString();
     db.prepare(
-      "INSERT INTO nodes (id,title,type,content,x,y,z,starred,payload,createdAt,updatedAt,dimId,area) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO nodes (id,title,type,content,x,y,z,starred,payload,createdAt,updatedAt,dimId,area,zoneId) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     ).run(
       id,
       n.title,
@@ -271,6 +332,7 @@ export function createStore(path, { seed = true } = {}) {
       now,
       n.dimId,
       n.area,
+      n.zoneId,
     );
     return getNode(id);
   };
@@ -329,6 +391,46 @@ export function createStore(path, { seed = true } = {}) {
       )
       .all(),
   });
+  // Reconcile only newly restored/imported items; established content stays put.
+  const repairLayout = (ids) => {
+    try {
+      const before = graph().nodes,
+        byId = new Map(before.map((n) => [n.id, n]));
+      for (const n of planSpatialLayout(before, ids)) {
+        const old = byId.get(n.id);
+        if (n.x !== old.x || n.y !== old.y || n.z !== old.z)
+          db.prepare("UPDATE nodes SET x=?,y=?,z=? WHERE id=?").run(
+            n.x,
+            n.y,
+            n.z,
+            n.id,
+          );
+      }
+    } catch (error) {
+      fail(error.message);
+    }
+  };
+  if (
+    !db.prepare("SELECT value FROM metadata WHERE key='organizers-v3'").get()
+  ) {
+    transaction(() => {
+      for (const n of db
+        .prepare("SELECT * FROM nodes WHERE type='dim'")
+        .all()
+        .map(parse)) {
+        const payload = validateNode(n).payload;
+        db.prepare("UPDATE nodes SET payload=? WHERE id=?").run(
+          JSON.stringify(payload),
+          n.id,
+        );
+      }
+      db.exec(
+        "UPDATE nodes SET zoneId=area WHERE dimId IS NOT NULL AND zoneId IS NULL",
+      );
+      repairLayout(graph().nodes.map((n) => n.id));
+      db.prepare("INSERT INTO metadata VALUES(?,?)").run("organizers-v3", "1");
+    });
+  }
   const batchPositions = (positions) =>
     transaction(() => {
       if (
@@ -369,6 +471,7 @@ export function createStore(path, { seed = true } = {}) {
     });
   const restore = (id) =>
     transaction(() => {
+      const existing = new Set(graph().nodes.map((n) => n.id));
       const n = getNode(id);
       if (!n || !n.deletedAt)
         throw new ApiError(404, "That item is not in Trash.");
@@ -386,6 +489,11 @@ export function createStore(path, { seed = true } = {}) {
         if (parent?.deletedAt) restoreOne(parent);
       }
       restoreOne(n);
+      repairLayout(
+        graph()
+          .nodes.filter((n) => !existing.has(n.id))
+          .map((n) => n.id),
+      );
       return graph();
     });
   return {
@@ -399,7 +507,7 @@ export function createStore(path, { seed = true } = {}) {
         .map(parse),
     }),
     export: () => ({
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       nodes: db
         .prepare("SELECT * FROM nodes ORDER BY createdAt,id")
@@ -408,15 +516,71 @@ export function createStore(path, { seed = true } = {}) {
       edges: db.prepare("SELECT * FROM edges").all(),
     }),
     getNode,
-    createNode: insert,
+    createNode(node) {
+      if (!node || typeof node !== "object" || Array.isArray(node))
+        fail("Expected a JSON object.");
+      return transaction(() => {
+        if (node.autoPlace !== undefined && typeof node.autoPlace !== "boolean")
+          fail("Automatic placement must be true or false.");
+        if (
+          node.type === "dim" &&
+          graph().nodes.filter((n) => n.type === "dim").length >= 64
+        )
+          fail("This world supports up to 64 Dims.");
+        const n = insert(node);
+        if (node.autoPlace) {
+          const parent = n.dimId ? getNode(n.dimId) : null;
+          const count = graph().nodes.filter(
+            (d) =>
+              d.id !== n.id && d.dimId === n.dimId && d.zoneId === n.zoneId,
+          ).length;
+          writePosition(
+            n.id,
+            parent
+              ? slotPosition(parent, n.zoneId, count)
+              : freePosition(n, graph().nodes),
+          );
+        }
+        return getNode(n.id);
+      });
+    },
     updateNode(id, input) {
       if (!input || typeof input !== "object" || Array.isArray(input))
         fail("Expected a JSON object.");
       const previous = active(id);
       if (input.type && input.type !== previous.type)
         fail("Item types cannot be changed. Create a new item instead.");
-      const n = validateNode({ ...previous, ...input });
+      const n = validateNode({
+        ...previous,
+        ...input,
+        ...(previous.type === "dim"
+          ? { payload: { ...previous.payload, ...input.payload } }
+          : {}),
+        zoneId:
+          input.zoneId === undefined &&
+          ((input.dimId !== undefined && input.dimId !== previous.dimId) ||
+            (input.area !== undefined && input.area !== previous.area))
+            ? null
+            : input.zoneId === undefined
+              ? previous.zoneId
+              : input.zoneId,
+      });
       validDim(n);
+      if (
+        n.type !== "dim" &&
+        (n.dimId !== previous.dimId || n.zoneId !== previous.zoneId)
+      ) {
+        const parent = n.dimId ? getNode(n.dimId) : null;
+        const count = graph().nodes.filter(
+          (d) => d.id !== id && d.dimId === n.dimId && d.zoneId === n.zoneId,
+        ).length;
+        Object.assign(
+          n,
+          parent
+            ? slotPosition(parent, n.zoneId, count)
+            : freePosition(n, graph().nodes),
+        );
+      }
       // Moving a Dim moves its contents by the same delta, atomically.
       return transaction(() => {
         if (n.type === "dim")
@@ -433,7 +597,7 @@ export function createStore(path, { seed = true } = {}) {
             writePosition(child.id, moved);
           }
         db.prepare(
-          "UPDATE nodes SET title=?,type=?,content=?,x=?,y=?,z=?,starred=?,payload=?,updatedAt=?,dimId=?,area=? WHERE id=?",
+          "UPDATE nodes SET title=?,type=?,content=?,x=?,y=?,z=?,starred=?,payload=?,updatedAt=?,dimId=?,area=?,zoneId=? WHERE id=?",
         ).run(
           n.title,
           n.type,
@@ -446,6 +610,7 @@ export function createStore(path, { seed = true } = {}) {
           new Date().toISOString(),
           n.dimId,
           n.area,
+          n.zoneId,
           id,
         );
         return getNode(id);
@@ -469,7 +634,7 @@ export function createStore(path, { seed = true } = {}) {
     },
     restore,
     batchPositions,
-    organize({ ids, dimId = null, area = "storage" }) {
+    organize({ ids, dimId = null, area = "storage", zoneId = null }) {
       if (
         !Array.isArray(ids) ||
         !ids.length ||
@@ -479,32 +644,117 @@ export function createStore(path, { seed = true } = {}) {
         fail("Choose unique documents to organize.");
       return transaction(() => {
         const parent = dimId ? active(dimId) : null;
+        if (parent && parent.type !== "dim") fail("Choose a Dim.");
+        const zone = parent
+          ? zoneId
+            ? zonesOf(parent).find((z) => z.id === zoneId)
+            : zoneOf(parent, null, area)
+          : null;
+        if (parent && !zone) fail("Choose an area in this Dim.");
         let count = parent
-          ? db
-              .prepare(
-                "SELECT id FROM nodes WHERE dimId=? AND area=? AND deletedAt IS NULL",
-              )
-              .all(dimId, area)
-              .filter((n) => !ids.includes(n.id)).length
+          ? graph().nodes.filter(
+              (n) =>
+                !ids.includes(n.id) &&
+                n.dimId === dimId &&
+                n.zoneId === zone.id,
+            ).length
           : 0;
         for (const id of ids) {
           const n = active(id);
           if (n.type === "dim")
             fail("Only documents can be assigned to a Dim.");
-          const position = parent
-            ? {
-                x: parent.x + (area === "desk" ? -235 : 235),
-                y: parent.y + 55 + Math.floor(count / 2) * 145,
-                z: parent.z + (count % 2 ? 130 : -130),
-              }
-            : {};
-          const next = validateNode({ ...n, dimId, area, ...position });
+          const next = {
+            ...n,
+            dimId,
+            area: zone?.type ?? area,
+            zoneId: zone?.id ?? null,
+          };
+          Object.assign(
+            next,
+            parent
+              ? slotPosition(parent, zone.id, count++)
+              : freePosition(next, graph().nodes),
+          );
+          validateNode(next);
           validDim(next);
-          db.prepare(
-            "UPDATE nodes SET dimId=?,area=?,updatedAt=? WHERE id=?",
-          ).run(dimId, area, new Date().toISOString(), id);
+          db.prepare("UPDATE nodes SET dimId=?,area=?,zoneId=? WHERE id=?").run(
+            next.dimId,
+            next.area,
+            next.zoneId,
+            id,
+          );
           writePosition(id, next);
-          count++;
+        }
+        return graph();
+      });
+    },
+    createZone(dimId, { type, name }) {
+      return transaction(() => {
+        const dim = active(dimId);
+        if (dim.type !== "dim") fail("Choose a Dim.");
+        const zone = { id: randomUUID(), type, name };
+        const next = validateNode({
+          ...dim,
+          payload: { ...dim.payload, zones: [...zonesOf(dim), zone] },
+        });
+        db.prepare("UPDATE nodes SET payload=?,updatedAt=? WHERE id=?").run(
+          JSON.stringify(next.payload),
+          new Date().toISOString(),
+          dimId,
+        );
+        return { zone: next.payload.zones.at(-1), ...graph() };
+      });
+    },
+    renameZone(dimId, zoneId, { name }) {
+      return transaction(() => {
+        const dim = active(dimId);
+        if (dim.type !== "dim" || !zonesOf(dim).some((z) => z.id === zoneId))
+          fail("That area is unavailable.");
+        const next = validateNode({
+          ...dim,
+          payload: {
+            ...dim.payload,
+            zones: zonesOf(dim).map((z) =>
+              z.id === zoneId ? { ...z, name } : z,
+            ),
+          },
+        });
+        db.prepare("UPDATE nodes SET payload=?,updatedAt=? WHERE id=?").run(
+          JSON.stringify(next.payload),
+          new Date().toISOString(),
+          dimId,
+        );
+        return graph();
+      });
+    },
+    removeZone(dimId, zoneId, { replacementId }) {
+      return transaction(() => {
+        const dim = active(dimId),
+          zones = zonesOf(dim),
+          old = zones.find((z) => z.id === zoneId),
+          target = zones.find((z) => z.id === replacementId);
+        if (dim.type !== "dim" || !old || !target || old.id === target.id)
+          fail("Choose another area for the documents.");
+        const next = validateNode({
+          ...dim,
+          payload: {
+            ...dim.payload,
+            zones: zones.filter((z) => z.id !== zoneId),
+          },
+        });
+        db.prepare("UPDATE nodes SET payload=?,updatedAt=? WHERE id=?").run(
+          JSON.stringify(next.payload),
+          new Date().toISOString(),
+          dimId,
+        );
+        db.prepare(
+          "UPDATE nodes SET zoneId=?,area=? WHERE dimId=? AND zoneId=?",
+        ).run(target.id, target.type, dimId, zoneId);
+        const counts = new Map();
+        for (const n of graph().nodes.filter((n) => n.dimId === dimId)) {
+          const count = counts.get(n.zoneId) || 0;
+          writePosition(n.id, slotPosition(next, n.zoneId, count));
+          counts.set(n.zoneId, count + 1);
         }
         return graph();
       });
@@ -513,11 +763,11 @@ export function createStore(path, { seed = true } = {}) {
       if (
         !input ||
         typeof input !== "object" ||
-        ![1, 2].includes(input.version ?? 1) ||
+        ![1, 2, 3].includes(input.version ?? 1) ||
         !Array.isArray(input.nodes) ||
         !Array.isArray(input.edges)
       )
-        fail("Choose a Dimention JSON export (version 1 or 2).");
+        fail("Choose a Dimention JSON export (version 1, 2 or 3).");
       if (input.nodes.length > 1000 || input.edges.length > 5000)
         fail("Import supports up to 1000 items and 5000 connections.");
       const ids = new Map(),
@@ -565,6 +815,13 @@ export function createStore(path, { seed = true } = {}) {
             (!n.deletedAt && parent.deletedAt)
           )
             fail("Every document must reference an available imported Dim.");
+          const zone = n.zoneId
+            ? zonesOf(parent).find((z) => z.id === n.zoneId)
+            : zoneOf(parent, null, n.area);
+          if (!zone)
+            fail("An imported document references a missing Desk or Storage.");
+          n.zoneId = zone.id;
+          n.area = zone.type;
         }
       const pairs = new Set(),
         edges = input.edges.map((e) => {
@@ -593,6 +850,21 @@ export function createStore(path, { seed = true } = {}) {
         connections: edges.length,
         trashed: validated.filter((n) => n.deletedAt).length,
       };
+      try {
+        planSpatialLayout(
+          [
+            ...graph().nodes,
+            ...validated.map((n) => ({
+              ...n,
+              id: ids.get(n.id),
+              dimId: n.dimId ? ids.get(n.dimId) : null,
+            })),
+          ],
+          [...ids.values()],
+        );
+      } catch (error) {
+        fail(error.message);
+      }
       if (previewOnly) return summary;
       return transaction(() => {
         const batches = new Map();
@@ -623,6 +895,7 @@ export function createStore(path, { seed = true } = {}) {
               "UPDATE nodes SET deletedAt=?,deleteBatch=? WHERE id=?",
             ).run(n.deletedAt, batches.get(key), ids.get(n.id));
           }
+        repairLayout([...ids.values()]);
         return { ...summary, ...graph() };
       });
     },
