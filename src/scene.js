@@ -1,171 +1,627 @@
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-
-export const palette = { note: '#688679', idea: '#b38a50', workflow: '#7d80a6', table: '#628aa0' };
-export const typeNames = { note: 'Note', idea: 'Idea', workflow: 'Workflow', table: 'Table' };
-export function preview(node) {
-  if (node.type === 'workflow') return (node.payload.steps || []).map(s => `${s.done ? '✓' : '○'} ${s.text}`).join('\n');
-  if (node.type === 'table') return `${node.payload.columns.join('  ·  ')}\n${node.payload.rows.length} rows · ${node.payload.columns.length} columns\n${node.content}`;
-  return node.content;
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+export const palette = {
+  note: "#699fff",
+  idea: "#ecad62",
+  workflow: "#a496ff",
+  table: "#58b8c9",
+  dim: "#8580ff",
+};
+export const typeNames = {
+  note: "Note",
+  idea: "Idea",
+  workflow: "Workflow",
+  table: "Table",
+  dim: "Dim",
+};
+export function preview(n) {
+  if (n.type === "workflow")
+    return (n.payload.steps || [])
+      .map((s) => `${s.done ? "✓" : "○"} ${s.text}`)
+      .join("\n");
+  if (n.type === "table")
+    return `${n.payload.columns.join(" · ")}\n${n.payload.rows.length} rows · ${n.content}`;
+  return n.content;
 }
-function rounded(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
-function wrap(ctx, text, width, maxLines) {
-  const words = text.replace(/\n+/g, '  ').split(/\s+/); const lines = []; let line = '';
-  for (const word of words) {
-    if (ctx.measureText(line + word).width > width && line) { lines.push(line.trim()); line = ''; }
-    line += word + ' ';
+function lines(ctx, text, width, max) {
+  const result = [];
+  let line = "";
+  for (const word of String(text).split(/\s+/)) {
+    if (ctx.measureText(line + word).width > width && line) {
+      result.push(line.trim());
+      line = "";
+    }
+    line += word + " ";
   }
-  if (line.trim()) lines.push(line.trim());
-  return lines.slice(0, maxLines).map((s, i) => {
-    if (i === maxLines - 1 && lines.length > maxLines) s += '…';
-    while (ctx.measureText(s).width > width && s.length > 1) s = s.slice(0, -2) + '…';
+  if (line.trim()) result.push(line.trim());
+  return result.slice(0, max).map((s, i) => {
+    if (i === max - 1 && result.length > max) s += "…";
+    while (ctx.measureText(s).width > width && s.length > 1)
+      s = s.slice(0, -2) + "…";
     return s;
   });
 }
-function cardTexture(node, selected) {
-  const canvas = document.createElement('canvas'); canvas.width = 720; canvas.height = 390;
-  const ctx = canvas.getContext('2d');
-  ctx.shadowColor = '#25372c16'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 8;
-  rounded(ctx, 14, 10, 692, 360, 22); ctx.fillStyle = '#ffffff'; ctx.fill();
-  ctx.shadowColor = 'transparent'; ctx.lineWidth = selected ? 6 : 2; ctx.strokeStyle = selected ? '#3d6554' : '#d7ddd7'; ctx.stroke();
-  ctx.fillStyle = palette[node.type]; rounded(ctx, 44, 42, 10, 27, 5); ctx.fill();
-  ctx.font = '600 23px Segoe UI, sans-serif'; ctx.fillText(typeNames[node.type].toUpperCase(), 70, 65);
-  ctx.fillStyle = '#a7afa8'; ctx.font = '25px Segoe UI'; ctx.fillText('⠿', 650, 66);
-  ctx.fillStyle = '#263a31'; ctx.font = '600 40px Segoe UI, sans-serif';
-  const title = wrap(ctx, node.title || 'Untitled', 610, 2); title.forEach((line, i) => ctx.fillText(line, 44, 123 + i * 43));
-  ctx.fillStyle = '#768078'; ctx.font = '28px Segoe UI, sans-serif';
-  const start = title.length > 1 ? 211 : 180;
-  wrap(ctx, preview(node) || 'A little room for something new.', 610, 2).forEach((line, i) => ctx.fillText(line, 44, start + i * 36));
-  ctx.strokeStyle = '#edf0eb'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(44, 298); ctx.lineTo(660, 298); ctx.stroke();
-  ctx.font = '21px Segoe UI, sans-serif'; ctx.fillStyle = '#8c968f'; ctx.fillText(selected ? 'Selected · open in editor' : 'Click to open', 44, 338);
-  ctx.textAlign = 'right'; ctx.fillText(`${Math.round(node.x)} / ${Math.round(node.y)} / ${Math.round(node.z)}`, 661, 338);
-  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; return texture;
+function texture(width, height, draw) {
+  const c = document.createElement("canvas");
+  c.width = width;
+  c.height = height;
+  draw(c.getContext("2d"));
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
-function labelSprite(text) {
-  const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 72;
-  const ctx = canvas.getContext('2d'); ctx.font = '25px Segoe UI, sans-serif';
-  let label = text; while (ctx.measureText(label).width > 480) label = label.slice(0, -2) + '…';
-  const width = Math.min(510, ctx.measureText(label).width + 28);
-  ctx.fillStyle = '#f4f6f0ec'; rounded(ctx, (512 - width) / 2, 7, width, 57, 13); ctx.fill();
-  ctx.fillStyle = '#728178'; ctx.textAlign = 'center'; ctx.fillText(label, 256, 44);
-  const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
-  sprite.scale.set(170, 24, 1); sprite.renderOrder = 1; return sprite;
+function card(n, selected, count) {
+  return texture(720, 380, (ctx) => {
+    const dim = n.type === "dim",
+      color = dim ? n.payload.color : palette[n.type];
+    ctx.fillStyle = dim ? "#252b45" : "#f9faff";
+    ctx.beginPath();
+    ctx.roundRect(8, 8, 704, 360, 23);
+    ctx.fill();
+    ctx.lineWidth = selected ? 7 : 2;
+    ctx.strokeStyle = selected ? "#a79fff" : dim ? color : "#d7dcec";
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(38, 38, 11, 25, 4);
+    ctx.fill();
+    ctx.font = "600 23px Segoe UI";
+    ctx.fillText(
+      dim ? "DIM / YOUR ROOM" : typeNames[n.type].toUpperCase(),
+      65,
+      60,
+    );
+    ctx.fillStyle = dim ? "#ffffff" : "#20273c";
+    ctx.font = "600 42px Segoe UI";
+    const title = lines(ctx, n.title, 630, 2);
+    title.forEach((s, i) => ctx.fillText(s, 38, 119 + i * 46));
+    ctx.fillStyle = dim ? "#b5bdd5" : "#737c95";
+    ctx.font = "28px Segoe UI";
+    lines(
+      ctx,
+      dim
+        ? `${count} documents · Desk & Storage`
+        : preview(n) || "Room for a new thought.",
+      630,
+      2,
+    ).forEach((s, i) =>
+      ctx.fillText(s, 38, (title.length > 1 ? 213 : 182) + i * 37),
+    );
+    ctx.fillStyle = dim ? "#a4adcc" : "#969db1";
+    ctx.font = "22px Segoe UI";
+    ctx.fillText(
+      dim
+        ? "Enter Dim  ↗"
+        : n.dimId
+          ? `${n.area === "desk" ? "DESK" : "STORAGE"} · Click to open`
+          : "INDEPENDENT · Click to open",
+      38,
+      336,
+    );
+  });
 }
-function dispose(object) {
-  object.traverse(o => { o.geometry?.dispose(); if (o.material) { for (const m of Array.isArray(o.material) ? o.material : [o.material]) { m.map?.dispose(); m.dispose(); } } });
+function textSprite(text, color = "#b5beda", scale = 220) {
+  const t = texture(720, 96, (ctx) => {
+    ctx.font = "600 36px Segoe UI";
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.fillText(lines(ctx, text, 680, 1)[0] || "", 360, 61);
+  });
+  const s = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true }),
+  );
+  s.scale.set(scale, (scale * 96) / 720, 1);
+  return s;
+}
+function dispose(obj) {
+  obj.traverse((o) => {
+    o.geometry?.dispose();
+    for (const m of o.material
+      ? Array.isArray(o.material)
+        ? o.material
+        : [o.material]
+      : []) {
+      m.map?.dispose();
+      m.dispose();
+    }
+  });
+}
+function room(n) {
+  const g = new THREE.Group(),
+    color = n.payload.color;
+  const floor = new THREE.Mesh(
+    new THREE.BoxGeometry(960, 6, 670),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.07,
+      depthWrite: false,
+    }),
+  );
+  floor.position.y = -120;
+  g.add(floor);
+  const outline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(960, 6, 670)),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.6 }),
+  );
+  outline.position.copy(floor.position);
+  g.add(outline);
+  g.add(
+    new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(
+        [
+          [-480, -116, -335],
+          [-480, 160, -335],
+          [480, 160, -335],
+          [480, -116, -335],
+        ].map((p) => new THREE.Vector3(...p)),
+      ),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.24 }),
+    ),
+  );
+  const divider = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, -113, -300),
+      new THREE.Vector3(0, -113, 300),
+    ]),
+    new THREE.LineDashedMaterial({
+      color: "#9aa3c1",
+      dashSize: 12,
+      gapSize: 12,
+      transparent: true,
+      opacity: 0.35,
+    }),
+  );
+  divider.computeLineDistances();
+  g.add(divider);
+  for (const [label, x] of [
+    ["DESK / EXECUTE", -240],
+    ["STORAGE / COLLECT", 240],
+  ]) {
+    const s = textSprite(label, color, 240);
+    s.position.set(x, -105, 285);
+    g.add(s);
+    const desk = new THREE.Mesh(
+      new THREE.BoxGeometry(260, 20, 145),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.13 }),
+    );
+    desk.position.set(x, -103, 0);
+    g.add(desk);
+  }
+  g.position.set(n.x, n.y, n.z);
+  return g;
 }
 export function createWorkspaceScene(container, callbacks) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'low-power' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75)); renderer.setClearColor('#f4f6f0');
-  renderer.domElement.setAttribute('aria-label', '3D workspace. Use the sidebar to access every node with a keyboard.');
-  renderer.domElement.tabIndex = 0; container.append(renderer.domElement);
-  const scene = new THREE.Scene(); const camera = new THREE.PerspectiveCamera(42, 1, 1, 30000);
-  camera.position.set(520, 370, 1500);
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = false; controls.minDistance = 100; controls.maxDistance = 22000; controls.target.set(0, 0, 0);
-  controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    powerPreference: "low-power",
+  });
+  renderer.setClearColor("#121724");
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+  const canvas = renderer.domElement;
+  canvas.tabIndex = 0;
+  canvas.setAttribute(
+    "aria-label",
+    "3D world. Use the sidebar for keyboard access to all items.",
+  );
+  container.append(canvas);
+  const world = new THREE.Scene(),
+    camera = new THREE.PerspectiveCamera(43, 1, 1, 40000);
+  camera.position.set(650, 630, 1800);
+  const controls = new OrbitControls(camera, canvas);
+  controls.enableDamping = false;
+  controls.minDistance = 180;
+  controls.maxDistance = 26000;
   controls.screenSpacePanning = true;
-  const grid = new THREE.GridHelper(3600, 36, '#cbd4c6', '#e1e7db'); grid.position.y = -340; grid.material.transparent = true; grid.material.opacity = .65; scene.add(grid);
-  const axes = new THREE.AxesHelper(95); axes.position.set(-650, -338, 200); scene.add(axes);
-  const cards = new Map(); let edgeGroup = new THREE.Group(); scene.add(edgeGroup);
-  let nodes = [], edges = [], selected = null, mode = 'select', axis = 'screen', frame = 0, gesture = null;
-  function requestRender() { if (!frame) frame = requestAnimationFrame(() => { frame = 0; renderer.render(scene, camera); }); }
-  controls.addEventListener('change', requestRender);
-  function resize() { const { width, height } = container.getBoundingClientRect(); if (!width || !height) return; renderer.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix(); requestRender(); }
-  const observer = new ResizeObserver(resize); observer.observe(container); resize();
-  function drawEdges() {
-    scene.remove(edgeGroup); dispose(edgeGroup); edgeGroup = new THREE.Group(); scene.add(edgeGroup);
-    for (const edge of edges) {
-      const source = cards.get(edge.source)?.position, target = cards.get(edge.target)?.position; if (!source || !target) continue;
-      const delta = target.clone().sub(source); if (delta.length() < 1) continue;
-      const middle = source.clone().lerp(target, .5);
-      if (edges.some(other => other.source === edge.target && other.target === edge.source)) {
-        let normal = new THREE.Vector3().crossVectors(delta, new THREE.Vector3(0, 1, 0)).normalize();
-        if (!normal.lengthSq()) normal.set(1, 0, 0); middle.addScaledVector(normal, 70);
-      }
-      const curve = new THREE.QuadraticBezierCurve3(source, middle, target);
-      const active = edge.source === selected || edge.target === selected;
-      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getPoints(28)), new THREE.LineBasicMaterial({ color: active ? '#719482' : '#b8c4b5' }));
-      edgeGroup.add(line);
-      const t = .68, direction = curve.getTangent(t).normalize();
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(5.5, 17, 8), new THREE.MeshBasicMaterial({ color: active ? '#567765' : '#8d9f87' }));
-      cone.position.copy(curve.getPoint(t)); cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction); edgeGroup.add(cone);
-      if (edge.label) { const label = labelSprite(edge.label); label.position.copy(curve.getPoint(.45)); label.position.y += 17; edgeGroup.add(label); }
-    }
+  controls.mouseButtons = {
+    LEFT: THREE.MOUSE.ROTATE,
+    MIDDLE: THREE.MOUSE.PAN,
+    RIGHT: THREE.MOUSE.PAN,
+  };
+  const grid = new THREE.GridHelper(14000, 140, "#313d59", "#232c40");
+  grid.position.y = -340;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.6;
+  world.add(grid);
+  let frame = 0,
+    nodes = [],
+    edges = [],
+    selected = new Set(),
+    mode = "select",
+    axis = "screen",
+    snap = false,
+    gesture = null,
+    linkGroup = new THREE.Group(),
+    edgeHits = [];
+  world.add(linkGroup);
+  const sprites = new Map(),
+    rooms = new Map();
+  function render() {
+    if (!frame)
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        renderer.render(world, camera);
+      });
   }
-  function update(nextNodes, nextEdges, nextSelected) {
-    nodes = nextNodes; edges = nextEdges; selected = nextSelected;
-    for (const [id, sprite] of cards) if (!nodes.some(n => n.id === id)) { scene.remove(sprite); dispose(sprite); cards.delete(id); }
-    for (const node of nodes) {
-      let sprite = cards.get(node.id); const signature = JSON.stringify(node) + (node.id === selected);
-      if (!sprite) { sprite = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: true })); sprite.scale.set(260, 141, 1); sprite.userData.id = node.id; scene.add(sprite); cards.set(node.id, sprite); }
-      if (sprite.userData.signature !== signature) { sprite.material.map?.dispose(); sprite.material.map = cardTexture(node, node.id === selected); sprite.material.needsUpdate = true; sprite.userData.signature = signature; }
-      sprite.position.set(node.x, node.y, node.z);
+  controls.addEventListener("change", render);
+  const resize = () => {
+    const r = container.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    renderer.setSize(r.width, r.height);
+    camera.aspect = r.width / r.height;
+    camera.updateProjectionMatrix();
+    render();
+  };
+  const observer = new ResizeObserver(resize);
+  observer.observe(container);
+  resize();
+  function drawEdges() {
+    world.remove(linkGroup);
+    dispose(linkGroup);
+    linkGroup = new THREE.Group();
+    world.add(linkGroup);
+    edgeHits = [];
+    for (const e of edges) {
+      const source = sprites.get(e.source),
+        target = sprites.get(e.target);
+      if (!source || !target) continue;
+      const a = source.position,
+        b = target.position,
+        delta = b.clone().sub(a);
+      if (delta.length() < 1) continue;
+      const mid = a.clone().lerp(b, 0.5);
+      let normal = new THREE.Vector3()
+        .crossVectors(delta, new THREE.Vector3(0, 1, 0))
+        .normalize();
+      if (!normal.lengthSq()) normal.set(1, 0, 0);
+      mid.addScaledVector(
+        normal,
+        edges.some((o) => o.source === e.target && o.target === e.source)
+          ? 110
+          : 30,
+      );
+      const curve = new THREE.QuadraticBezierCurve3(a, mid, b),
+        active = selected.has(e.source) || selected.has(e.target),
+        color = active ? "#b2a3ff" : "#687796";
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(curve.getPoints(32)),
+        new THREE.LineBasicMaterial({
+          color,
+          transparent: true,
+          opacity: active ? 0.95 : 0.62,
+        }),
+      );
+      line.userData.edge = e.id;
+      linkGroup.add(line);
+      edgeHits.push(line);
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(active ? 10 : 8, 25, 10),
+        new THREE.MeshBasicMaterial({ color }),
+      );
+      cone.position.copy(curve.getPoint(0.7));
+      cone.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        curve.getTangent(0.7).normalize(),
+      );
+      linkGroup.add(cone);
+      const label = textSprite(
+        `${e.label || "Open connection"}  →`,
+        active ? "#dbd5ff" : "#9daac6",
+        180,
+      );
+      label.position.copy(curve.getPoint(0.47));
+      label.position.y += 18;
+      label.userData.edge = e.id;
+      linkGroup.add(label);
+      edgeHits.push(label);
     }
-    drawEdges(); requestRender();
+    render();
+  }
+  function update(nextNodes, nextEdges, nextSelected = []) {
+    nodes = nextNodes;
+    edges = nextEdges;
+    selected = new Set(
+      Array.isArray(nextSelected) ? nextSelected : [nextSelected],
+    );
+    const ids = new Set(nodes.map((n) => n.id));
+    for (const [id, s] of sprites)
+      if (!ids.has(id)) {
+        world.remove(s);
+        dispose(s);
+        sprites.delete(id);
+      }
+    for (const [id, r] of rooms)
+      if (!ids.has(id)) {
+        world.remove(r);
+        dispose(r);
+        rooms.delete(id);
+      }
+    for (const n of nodes) {
+      let s = sprites.get(n.id);
+      if (!s) {
+        s = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true }));
+        s.userData.id = n.id;
+        s.scale.set(
+          n.type === "dim" ? 350 : 260,
+          n.type === "dim" ? 185 : 137,
+          1,
+        );
+        world.add(s);
+        sprites.set(n.id, s);
+      }
+      const count = nodes.filter((c) => c.dimId === n.id).length,
+        signature = JSON.stringify(n) + selected.has(n.id) + count;
+      if (s.userData.signature !== signature) {
+        s.material.map?.dispose();
+        s.material.map = card(n, selected.has(n.id), count);
+        s.material.needsUpdate = true;
+        s.userData.signature = signature;
+      }
+      s.position.set(
+        n.x,
+        n.y + (n.type === "dim" ? 210 : 0),
+        n.z + (n.type === "dim" ? -235 : 0),
+      );
+      if (n.type === "dim") {
+        let r = rooms.get(n.id);
+        if (!r || r.userData.color !== n.payload.color) {
+          if (r) {
+            world.remove(r);
+            dispose(r);
+          }
+          r = room(n);
+          r.userData.color = n.payload.color;
+          rooms.set(n.id, r);
+          world.add(r);
+        }
+        r.position.set(n.x, n.y, n.z);
+      }
+    }
+    drawEdges();
   }
   function fit(reset = false) {
-    const bounds = new THREE.Box3(); for (const sprite of cards.values()) bounds.expandByPoint(sprite.position);
-    if (bounds.isEmpty()) bounds.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(500, 350, 300));
-    const center = bounds.getCenter(new THREE.Vector3());
-    const direction = reset ? new THREE.Vector3(.31, .22, 1).normalize() : camera.position.clone().sub(controls.target).normalize();
-    const right = new THREE.Vector3().crossVectors(camera.up, direction).normalize();
-    const up = new THREE.Vector3().crossVectors(direction, right).normalize();
-    const tanY = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), tanX = tanY * camera.aspect;
-    let distance = 650;
-    for (const sprite of cards.values()) {
-      const relative = sprite.position.clone().sub(center), depth = relative.dot(direction);
-      distance = Math.max(distance, depth + (Math.abs(relative.dot(right)) + 150) / tanX, depth + (Math.abs(relative.dot(up)) + 130) / tanY);
+    const points = [];
+    for (const n of nodes) {
+      if (n.type === "dim") {
+        for (const x of [-500, 500])
+          for (const y of [-130, 320])
+            for (const z of [-350, 350])
+              points.push(new THREE.Vector3(n.x + x, n.y + y, n.z + z));
+      } else points.push(new THREE.Vector3(n.x, n.y, n.z));
     }
-    distance = Math.min(controls.maxDistance, distance * 1.20);
-    controls.target.copy(center); camera.position.copy(center).addScaledVector(direction, distance); controls.update(); requestRender();
+    const bounds = new THREE.Box3().setFromPoints(points);
+    if (bounds.isEmpty())
+      bounds.setFromCenterAndSize(
+        new THREE.Vector3(),
+        new THREE.Vector3(500, 350, 300),
+      );
+    const center = bounds.getCenter(new THREE.Vector3()),
+      direction = reset
+        ? new THREE.Vector3(0.28, 0.25, 1).normalize()
+        : camera.position.clone().sub(controls.target).normalize(),
+      right = new THREE.Vector3()
+        .crossVectors(camera.up, direction)
+        .normalize(),
+      up = new THREE.Vector3().crossVectors(direction, right).normalize(),
+      tanY = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2),
+      tanX = tanY * camera.aspect;
+    let distance = 700;
+    for (const p of points) {
+      const d = p.clone().sub(center);
+      distance = Math.max(
+        distance,
+        d.dot(direction) + (Math.abs(d.dot(right)) + 155) / tanX,
+        d.dot(direction) + (Math.abs(d.dot(up)) + 135) / tanY,
+      );
+    }
+    distance = Math.min(26000, distance * 1.17);
+    controls.target.copy(center);
+    camera.position.copy(center).addScaledVector(direction, distance);
+    controls.update();
+    render();
   }
   function focus(id) {
-    const sprite = cards.get(id); if (!sprite) return;
-    const direction = camera.position.clone().sub(controls.target).normalize(); controls.target.copy(sprite.position);
-    camera.position.copy(sprite.position).addScaledVector(direction, 780); controls.update(); requestRender();
+    const n = nodes.find((n) => n.id === id);
+    if (!n) return;
+    const target = new THREE.Vector3(n.x, n.y, n.z),
+      direction = camera.position.clone().sub(controls.target).normalize();
+    controls.target.copy(target);
+    camera.position
+      .copy(target)
+      .addScaledVector(direction, n.type === "dim" ? 1400 : 850);
+    controls.update();
+    render();
   }
-  const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2();
-  function ray(event) { const r = renderer.domElement.getBoundingClientRect(); pointer.set((event.clientX - r.left) / r.width * 2 - 1, -(event.clientY - r.top) / r.height * 2 + 1); raycaster.setFromCamera(pointer, camera); return raycaster; }
-  const canvas = renderer.domElement;
-  canvas.addEventListener('pointerdown', event => {
-    if (event.button !== 0 || mode === 'pan') return;
-    const hit = ray(event).intersectObjects([...cards.values()])[0]; if (!hit) return;
-    event.stopImmediatePropagation(); event.preventDefault();
-    if (mode === 'move' && !callbacks.canMove(hit.object.userData.id)) return;
-    const origin = hit.object.position.clone(); const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()), origin);
-    const point = raycaster.ray.intersectPlane(plane, new THREE.Vector3());
-    gesture = { sprite: hit.object, x: event.clientX, y: event.clientY, origin, plane, point, moved: false };
-    controls.enabled = false; canvas.setPointerCapture(event.pointerId);
-  }, true);
-  canvas.addEventListener('pointermove', event => {
+  function rect(id) {
+    const s = sprites.get(id),
+      r = canvas.getBoundingClientRect();
+    if (!s)
+      return {
+        x: r.x + r.width / 2 - 80,
+        y: r.y + r.height / 2 - 50,
+        width: 160,
+        height: 100,
+      };
+    const p = s.position.clone().project(camera),
+      distance = camera.position.distanceTo(s.position),
+      h =
+        (s.scale.y * r.height) /
+        (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * distance),
+      w = (h * s.scale.x) / s.scale.y;
+    return {
+      x: r.x + ((p.x + 1) * r.width) / 2 - w / 2,
+      y: r.y + ((1 - p.y) * r.height) / 2 - h / 2,
+      width: w,
+      height: h,
+    };
+  }
+  const raycaster = new THREE.Raycaster();
+  raycaster.params.Line.threshold = 12;
+  const pointer = new THREE.Vector2();
+  function ray(e) {
+    const r = canvas.getBoundingClientRect();
+    pointer.set(
+      ((e.clientX - r.left) / r.width) * 2 - 1,
+      (-(e.clientY - r.top) / r.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(pointer, camera);
+    return raycaster;
+  }
+  canvas.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (e.button !== 0 || mode === "pan") return;
+      const caster = ray(e),
+        hit = caster.intersectObjects([...sprites.values()])[0];
+      if (!hit) {
+        const edge = caster.intersectObjects(edgeHits)[0];
+        if (edge) {
+          e.stopImmediatePropagation();
+          callbacks.onEdge(edge.object.userData.edge);
+        }
+        return;
+      }
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      const id = hit.object.userData.id;
+      if (e.shiftKey || mode === "multi") {
+        callbacks.onToggle(id);
+        return;
+      }
+      if (mode === "move" && !callbacks.canMove(id)) return;
+      const origin = hit.object.position.clone(),
+        plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+          camera.getWorldDirection(new THREE.Vector3()),
+          origin,
+        ),
+        ids = selected.has(id) ? new Set(selected) : new Set([id]);
+      gesture = {
+        id,
+        x: e.clientX,
+        y: e.clientY,
+        origin,
+        plane,
+        point: raycaster.ray.intersectPlane(plane, new THREE.Vector3()),
+        primary: nodes.filter((n) => ids.has(n.id) && !ids.has(n.dimId)),
+        affected: nodes.filter((n) => ids.has(n.id) || ids.has(n.dimId)),
+        moved: false,
+        delta: new THREE.Vector3(),
+      };
+      controls.enabled = false;
+      canvas.setPointerCapture(e.pointerId);
+    },
+    true,
+  );
+  canvas.addEventListener(
+    "pointermove",
+    (e) => {
+      if (!gesture) return;
+      e.stopImmediatePropagation();
+      const dx = e.clientX - gesture.x,
+        dy = e.clientY - gesture.y;
+      if (Math.hypot(dx, dy) < 5 && !gesture.moved) return;
+      gesture.moved = true;
+      if (mode !== "move") return;
+      const delta = new THREE.Vector3();
+      if (axis === "screen") {
+        const p = ray(e).ray.intersectPlane(gesture.plane, new THREE.Vector3());
+        if (!p || !gesture.point) return;
+        delta.copy(p.sub(gesture.point));
+      } else {
+        const v = new THREE.Vector3();
+        v[axis] = 100;
+        const a = gesture.origin.clone().project(camera),
+          b = gesture.origin.clone().add(v).project(camera),
+          r = canvas.getBoundingClientRect(),
+          px = ((b.x - a.x) * r.width) / 2,
+          py = (-(b.y - a.y) * r.height) / 2,
+          norm = px * px + py * py;
+        delta[axis] = norm > 4 ? ((dx * px + dy * py) / norm) * 100 : -dy * 2;
+      }
+      for (const key of ["x", "y", "z"]) {
+        delta[key] = Math.round(delta[key] / (snap ? 50 : 1)) * (snap ? 50 : 1);
+        const low = Math.max(...gesture.affected.map((n) => -5000 - n[key])),
+          high = Math.min(...gesture.affected.map((n) => 5000 - n[key]));
+        delta[key] = THREE.MathUtils.clamp(delta[key], low, high);
+      }
+      gesture.delta.copy(delta);
+      for (const n of gesture.affected) {
+        sprites
+          .get(n.id)
+          ?.position.set(
+            n.x + delta.x,
+            n.y + delta.y + (n.type === "dim" ? 210 : 0),
+            n.z + delta.z + (n.type === "dim" ? -235 : 0),
+          );
+        rooms
+          .get(n.id)
+          ?.position.set(n.x + delta.x, n.y + delta.y, n.z + delta.z);
+      }
+      drawEdges();
+    },
+    true,
+  );
+  function end(e, cancel = false) {
     if (!gesture) return;
-    event.stopImmediatePropagation(); const dx = event.clientX - gesture.x, dy = event.clientY - gesture.y;
-    if (Math.hypot(dx, dy) < 5 && !gesture.moved) return;
-    gesture.moved = true; if (mode !== 'move') return;
-    const position = gesture.origin.clone();
-    if (axis === 'screen') {
-      const point = ray(event).ray.intersectPlane(gesture.plane, new THREE.Vector3()); if (!point || !gesture.point) return;
-      position.add(point.sub(gesture.point));
-    } else {
-      const vector = new THREE.Vector3(); vector[axis] = 100;
-      const start = gesture.origin.clone().project(camera), end = gesture.origin.clone().add(vector).project(camera);
-      const rect = canvas.getBoundingClientRect(); const px = (end.x - start.x) * rect.width / 2, py = -(end.y - start.y) * rect.height / 2;
-      const norm = px * px + py * py;
-      position[axis] += norm > 4 ? (dx * px + dy * py) / norm * 100 : -dy * 2;
+    e.stopImmediatePropagation();
+    const g = gesture;
+    gesture = null;
+    controls.enabled = true;
+    if (canvas.hasPointerCapture(e.pointerId))
+      canvas.releasePointerCapture(e.pointerId);
+    if (cancel) {
+      update(nodes, edges, [...selected]);
+      return;
     }
-    for (const key of ['x', 'y', 'z']) position[key] = Math.round(THREE.MathUtils.clamp(position[key], -5000, 5000));
-    gesture.sprite.position.copy(position); drawEdges(); requestRender();
-    callbacks.onDrag?.(position);
-  }, true);
-  function end(event, cancelled = false) {
-    if (!gesture) return; event.stopImmediatePropagation(); const g = gesture; gesture = null;
-    controls.enabled = true; if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-    if (cancelled) { g.sprite.position.copy(g.origin); drawEdges(); requestRender(); return; }
-    if (mode === 'move' && g.moved) callbacks.onMove(g.sprite.userData.id, { x: g.sprite.position.x, y: g.sprite.position.y, z: g.sprite.position.z });
-    else if (!g.moved) callbacks.onSelect(g.sprite.userData.id);
+    if (g.moved && mode === "move")
+      callbacks.onMove(
+        g.primary.map((n) => ({
+          id: n.id,
+          x: n.x + g.delta.x,
+          y: n.y + g.delta.y,
+          z: n.z + g.delta.z,
+        })),
+      );
+    else if (!g.moved) callbacks.onSelect(g.id);
   }
-  canvas.addEventListener('pointerup', e => end(e), true); canvas.addEventListener('pointercancel', e => end(e, true), true);
-  return { update, fit, focus, setMode(value, nextAxis) { mode = value; axis = nextAxis; controls.mouseButtons.LEFT = mode === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE; canvas.style.cursor = mode === 'move' || mode === 'pan' ? 'grab' : 'default'; }, getTarget() { return { x: Math.round(controls.target.x), y: Math.round(controls.target.y), z: Math.round(controls.target.z) }; }, dispose() { observer.disconnect(); controls.dispose(); cancelAnimationFrame(frame); dispose(scene); renderer.dispose(); canvas.remove(); } };
+  canvas.addEventListener("pointerup", (e) => end(e), true);
+  canvas.addEventListener("pointercancel", (e) => end(e, true), true);
+  canvas.addEventListener("webglcontextlost", (e) => {
+    e.preventDefault();
+    callbacks.onUnavailable?.();
+  });
+  return {
+    update,
+    fit,
+    focus,
+    rect,
+    setMode(m, a = "screen", s = false) {
+      mode = m;
+      axis = a;
+      snap = s;
+      controls.mouseButtons.LEFT =
+        m === "pan" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+      canvas.style.cursor =
+        m === "move" || m === "pan"
+          ? "grab"
+          : m === "multi"
+            ? "crosshair"
+            : "default";
+    },
+    getTarget() {
+      return {
+        x: Math.round(controls.target.x),
+        y: Math.round(controls.target.y),
+        z: Math.round(controls.target.z),
+      };
+    },
+    dispose() {
+      observer.disconnect();
+      controls.dispose();
+      cancelAnimationFrame(frame);
+      dispose(world);
+      renderer.dispose();
+      canvas.remove();
+    },
+  };
 }

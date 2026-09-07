@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "nodes": [
+    {"id":"example-dim","type":"dim","title":"Imported room","content":"A portable example Dim.","payload":{"color":"#e3ad6b"},"x":-1400,"y":0,"z":0},
+    {"id":"example-note","type":"note","title":"Imported reference","content":"This document arrived with its room and a connection.","payload":{},"dimId":"example-dim","area":"storage","x":-1165,"y":55,"z":-130}
+  ],
+  "edges": [
+    {"id":"example-link","source":"example-note","target":"example-dim","label":"belongs with"}
+  ]
+}

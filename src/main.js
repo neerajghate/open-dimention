@@ -1,298 +1,1116 @@
-import './style.css';
-import { createWorkspaceScene, palette, typeNames, preview } from './scene.js';
+import "./style.css";
+import { createWorkspaceScene, palette, typeNames, preview } from "./scene.js";
+import { renderPayload } from "./structured.js";
+import { $, escape as esc, icons, safeGet, safeSet } from "./ui.js";
 
-const $ = selector => document.querySelector(selector);
-const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const clone = value => structuredClone(value);
-const icons = { note: '▤', idea: '✧', workflow: '☷', table: '▦' };
-let graph = { nodes: [], edges: [] }, selected = null, draft = null, dirty = false, scene, loaded = false, saving = null, navigating = false;
-let search = '', filter = 'all', toastTimer, localWarning = false, saveFailure = '';
+let graph = { nodes: [], edges: [] },
+  trash = [],
+  scene,
+  loaded = false,
+  draft = null,
+  dirty = false,
+  saving = null,
+  busy = false,
+  saveError = "",
+  activeDim = null,
+  scope = "all",
+  filter = "all",
+  query = "",
+  mode = "select",
+  multi = new Set(),
+  trail = [],
+  toastTimer;
+const clone = structuredClone,
+  documents = () => graph.nodes.filter((n) => n.type !== "dim"),
+  dims = () => graph.nodes.filter((n) => n.type === "dim"),
+  get = (id) => graph.nodes.find((n) => n.id === id);
+const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const dot = (n) =>
+  `<span class="type-icon" style="--item-color:${n.type === "dim" ? n.payload.color : palette[n.type]}">${icons[n.type]}</span>`;
+$("#app").innerHTML = `
+<aside id="sidebar" class="sidebar" aria-label="Workspace navigation">
+  <div class="brand-row"><button id="home" class="brand" aria-label="Show all of my world"><span class="brand-mark">D<span>·</span></span><span class="sidebar-label">dimention<span class="beta">02</span></span></button><button id="collapse" class="icon-button" aria-label="Collapse sidebar" title="Collapse sidebar">◧</button></div>
+  <div class="sidebar-main"><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find anything…" aria-label="Search everything"><kbd>/</kbd></label>
+  <nav class="main-nav"><button data-scope="all" class="nav-item active" title="All of my world"><span>⌘</span><span class="sidebar-label">My world</span><small id="world-count"></small></button><button data-scope="loose" class="nav-item" title="Independent documents"><span>▤</span><span class="sidebar-label">Independent docs</span><small id="loose-count"></small></button><button id="connections" class="nav-item" title="Browse all connections"><span>⇄</span><span class="sidebar-label">Connections</span><small id="edge-count"></small></button></nav>
+  <div class="section-caption"><span class="sidebar-label">YOUR DIMS</span><button data-new-dim aria-label="Create a Dim" title="Create a Dim">＋</button></div><div id="dim-list"></div>
+  <div class="section-caption sidebar-label"><span id="list-heading">DOCUMENTS</span><select id="type-filter" aria-label="Filter documents"><option value="all">All types</option>${["note", "idea", "workflow", "table"].map((t) => `<option value="${t}">${typeNames[t]}s</option>`).join("")}</select></div>
+  <div id="node-list" class="node-list"></div></div>
+  <div class="sidebar-bottom"><button class="primary new-dim" data-new-dim title="New Dim"><span>＋</span><span class="sidebar-label">New Dim</span></button><button id="new-document" class="secondary" title="New document"><span>＋</span><span class="sidebar-label">New document</span></button><div class="utilities"><button id="trash" title="Trash" aria-label="Open Trash">♧ <span class="sidebar-label">Trash</span><small id="trash-count">0</small></button><button id="import" aria-label="Import JSON" title="Import JSON">↓</button><button id="export" aria-label="Export JSON" title="Export JSON">↑</button></div><div class="local-status sidebar-label"><span></span> Yours. On this computer.</div></div>
+</aside>
+<main id="world" class="world"><header class="world-topbar"><div class="breadcrumb"><span class="world-dot"></span><span id="world-title">My world</span><span class="slash">/</span><span class="muted">A place for everything</span></div><div class="top-actions"><button id="help" class="dark-quiet">? Guide</button><button class="dark-primary" data-new-dim>＋ New Dim</button></div></header>
+  <section class="stage" aria-label="3D world"><div id="canvas-container"></div><div class="world-heading"><span class="eyebrow">THINK IN A NEW DIMENSION</span><h1>Make room for your ideas<span>.</span></h1><p>Rooms for your topics. Space for what’s next.</p></div>
+  <div id="world-notice" class="world-notice" hidden></div><div id="dim-focus" class="dim-focus" hidden></div>
+  <div id="selection-bar" class="selection-bar" hidden></div>
+  <div class="view-toolbar" aria-label="View and placement controls">${[
+    ["select", "↖", "Explore"],
+    ["multi", "▧", "Select items"],
+    ["move", "✥", "Move"],
+    ["pan", "↔", "Pan"],
+  ]
+    .map(
+      ([m, i, t]) =>
+        `<button data-mode="${m}" aria-pressed="${m === "select"}" class="${m === "select" ? "active" : ""}">${i}<span>${t}</span></button>`,
+    )
+    .join(
+      "",
+    )}<span class="tool-divider"></span><select id="move-axis" aria-label="Movement axis"><option value="screen">View plane</option><option value="x">X axis</option><option value="y">Y axis</option><option value="z">Z · depth</option></select><label class="snap-control"><input id="snap" type="checkbox">Snap</label><span class="tool-divider"></span><button id="fit" title="Fit everything">⛶<span>Fit all</span></button><button id="reset" aria-label="Reset view">↺</button></div>
+  <footer class="world-footer"><span id="world-stats">Opening your world…</span><span id="controls-hint">Drag empty space to orbit · Scroll to zoom · Shift-click to select</span></footer></section>
+</main>
+<section id="editor" class="editor" role="dialog" aria-modal="true" aria-label="Full-page editor" hidden></section>
+<dialog id="dialog"><div id="dialog-content"></div></dialog><div id="toast" class="toast" role="status" hidden></div><input id="import-file" type="file" accept=".json,application/json" hidden>`;
 
-$('#app').innerHTML = `
-  <aside class="sidebar" aria-label="Workspace navigation">
-    <a class="brand" href="/" aria-label="Dimention home"><span class="brand-icon">◇</span><span>Dimention<span class="brand-period">.</span></span></a>
-    <div class="workspace-name"><span class="workspace-dot"></span> My workspace <span class="local-badge">LOCAL</span></div>
-    <label class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Find a thought…" aria-label="Search nodes"><kbd>/</kbd></label>
-    <div class="sidebar-section"><span>YOUR SPACE</span><span id="node-count">—</span></div>
-    <div class="filters" aria-label="Filter by node type">${['all', ...Object.keys(typeNames)].map(type => `<button class="filter ${type === 'all' ? 'active' : ''}" data-filter="${type}" aria-pressed="${type === 'all'}">${type === 'all' ? 'All' : typeNames[type] + 's'}</button>`).join('')}</div>
-    <div id="node-list" class="node-list" aria-label="Nodes"><p class="list-message">Opening your workspace…</p></div>
-    <div class="create-section"><div class="sidebar-section"><span>ADD TO YOUR SPACE</span><span>＋</span></div><div class="create-grid">${Object.keys(typeNames).map(type => `<button data-create="${type}" disabled><span style="color:${palette[type]}">${icons[type]}</span>${typeNames[type]}</button>`).join('')}</div></div>
-    <div class="sidebar-footer"><span class="status-dot"></span><span>Stored on this computer</span><button id="export" title="Export workspace as JSON" aria-label="Export workspace" disabled>↥</button></div>
-  </aside>
-  <main class="main-space">
-    <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong>My space</strong></div><button id="help" class="quiet">? <span>Quick guide</span></button></header>
-    <section class="stage" aria-label="Spatial workspace">
-      <div class="space-heading"><span class="eyebrow">A LITTLE ROOM FOR BIG IDEAS</span><h1>Your thoughts, connected.</h1><p>Collect the pieces. Give them a place.</p></div>
-      <div id="canvas-container"></div>
-      <div id="scene-fallback" class="scene-fallback" hidden><span class="fallback-icon">◇</span><h2>Keep thinking in two dimensions.</h2><p>Your browser couldn’t start WebGL. Try enabling hardware acceleration, or use the list and editor to keep working.</p></div>
-      <div id="empty-space" class="empty-space" hidden><span>✧</span><h2>Start with a little thought.</h2><p>Add a note, idea, workflow, or table from the sidebar.<br>This space is yours to shape.</p><button class="primary" data-create="note">＋ Create your first note</button></div>
-      <div id="load-error" class="scene-fallback" hidden><h2>Couldn’t open your workspace.</h2><p id="load-error-message"></p><button id="retry" class="primary">Try again</button></div>
-      <div class="view-toolbar" aria-label="3D controls"><div class="tool-segment"><button id="select-mode" class="active" aria-pressed="true" title="Click cards to edit; drag empty space to orbit">↖ <span>Select</span></button><button id="move-mode" aria-pressed="false" title="Drag a card to change its position">✥ <span>Move</span></button></div><select id="move-axis" aria-label="Movement axis" title="Movement axis" hidden><option value="screen">View plane</option><option value="x">X axis</option><option value="y">Y axis</option><option value="z">Z · depth</option></select><button id="pan-mode" aria-pressed="false" title="Drag to pan the camera">↔ <span>Pan</span></button><span class="toolbar-divider"></span><button id="fit-all" title="Fit all nodes in view">⛶ <span>Fit all</span></button><button id="reset-view" title="Restore the initial viewing angle" aria-label="Reset view">↺</button></div>
-      <div class="canvas-footer"><span id="scene-status"><span class="status-dot"></span> A space in three dimensions</span><span id="control-hint">Drag space to orbit <i>·</i> Right-drag to pan <i>·</i> Scroll to zoom</span></div>
-    </section>
-  </main>
-  <aside id="editor" class="editor" aria-label="Node editor" hidden></aside>
-  <div id="toast" class="toast" role="status" hidden></div>
-  <dialog id="decision-dialog"><div id="dialog-content"></div></dialog>
-  <dialog id="help-dialog"><button class="dialog-close quiet" aria-label="Close guide">×</button><span class="eyebrow">MAKE YOURSELF AT HOME</span><h2>A place to think in 3D.</h2><p>Every card has a real position in space. Open one to write in a familiar editor.</p><dl><dt>Look around</dt><dd>Drag empty space to orbit. Right-drag or middle-drag to pan. Scroll to zoom.</dd><dt>Open a thought</dt><dd>Click a card, or find it in the searchable sidebar. Search includes notes, checklist steps, and table cells.</dd><dt>Give it a place</dt><dd>Choose Move, then drag a card. Pick X, Y, or Z for a single axis. The editor also has precise coordinates. Save to keep your move.</dd><dt>Connect the pieces</dt><dd>Open a node and choose a destination under Connections. Arrows point from source to destination; labels describe the link.</dd><dt>Keep your work</dt><dd>Use Save changes or Ctrl/Cmd+S. A prompt protects unsaved edits when you switch. Local draft recovery helps after a refresh.</dd><dt>Find your bearings</dt><dd>Fit all brings every card into view. Reset view restores the original angle. Press / to search; Escape closes the editor.</dd></dl><button class="primary close-guide">Got it</button></dialog>
-`;
-
-function toast(message, error = false) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').classList.toggle('error', error); $('#toast').hidden = false; toastTimer = setTimeout(() => { $('#toast').hidden = true; }, error ? 8000 : 4000); }
-async function api(path, options = {}) {
-  let response;
-  try { response = await fetch('/api' + path, { ...options, headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(12000), body: options.body === undefined ? undefined : JSON.stringify(options.body) }); }
-  catch { throw new Error('The local server is unavailable. Your draft is still here. Restart the server and try again.'); }
-  const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Something went wrong. Please try again.'); return data;
+function toast(message, error = false, action = null) {
+  clearTimeout(toastTimer);
+  $("#toast").innerHTML =
+    `<span>${esc(message)}</span>${action ? `<button id="toast-action">${esc(action.label)}</button>` : ""}`;
+  $("#toast").classList.toggle("error", error);
+  $("#toast").hidden = false;
+  if (action) $("#toast-action").onclick = () => action.run();
+  toastTimer = setTimeout(
+    () => {
+      $("#toast").hidden = true;
+    },
+    action ? 12000 : error ? 9000 : 4500,
+  );
 }
-function draftKey(id) { return `dimention:draft:${id}`; }
-function remember() {
-  try { if (draft) localStorage.setItem(draftKey(draft.id), JSON.stringify(draft)); }
-  catch { if (!localWarning) { toast('Browser draft recovery is unavailable. Keep this tab open until you save.', true); localWarning = true; } }
-}
-function forget(id) { try { localStorage.removeItem(draftKey(id)); } catch { /* Saving to SQLite still works in private browsers. */ } }
-function recover(node) {
+async function api(path, { method = "GET", body } = {}) {
+  let r;
   try {
-    const raw = localStorage.getItem(draftKey(node.id)); if (!raw) return null;
-    const value = JSON.parse(raw);
-    if (value.id === node.id && value.type === node.type && typeof value.title === 'string' && typeof value.content === 'string' && value.payload && ['x', 'y', 'z'].every(k => Number.isFinite(value[k]))) {
-      if (value.type === 'workflow' && !Array.isArray(value.payload.steps)) return null;
-      if (value.type === 'table' && (!Array.isArray(value.payload.columns) || !Array.isArray(value.payload.rows))) return null;
-      return value;
-    }
-  } catch { /* Malformed browser drafts must not block stored data. */ }
+    r = await fetch("/api" + path, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw new Error(
+      "The local server is unavailable. Your draft is still here. Try again after restarting it.",
+    );
+  }
+  let data;
+  try {
+    data = await r.json();
+  } catch {
+    throw new Error(
+      "The server returned an unreadable response. Please try again.",
+    );
+  }
+  if (!r.ok)
+    throw new Error(data.error || "The request could not be completed.");
+  return data;
+}
+async function refresh() {
+  const [next, bin] = await Promise.all([api("/workspace"), api("/trash")]);
+  graph = next;
+  trash = bin.nodes;
+  multi = new Set([...multi].filter((id) => get(id)));
+  if (activeDim && !get(activeDim)) {
+    activeDim = null;
+    scope = "all";
+  }
+  renderWorld();
+}
+function remember() {
+  if (draft && !safeSet(`dimention:draft:${draft.id}`, JSON.stringify(draft)))
+    toast(
+      "Browser draft recovery is unavailable. Save before closing this page.",
+      true,
+    );
+}
+function forget(id) {
+  safeSet(`dimention:draft:${id}`, null);
+}
+function recovered(node) {
+  try {
+    const r = JSON.parse(safeGet(`dimention:draft:${node.id}`));
+    if (
+      r &&
+      r.id === node.id &&
+      r.type === node.type &&
+      typeof r.title === "string" &&
+      typeof r.content === "string" &&
+      r.payload &&
+      ["x", "y", "z"].every((k) => Number.isFinite(r[k]))
+    )
+      return { ...node, ...r };
+  } catch {}
   return null;
 }
-function markDirty() { dirty = true; saveFailure = ''; remember(); updateSaveStatus(); }
-function updateSaveStatus(message) {
+function markDirty() {
+  dirty = true;
+  saveError = "";
+  remember();
+  saveStatus();
+}
+function saveStatus() {
   if (!draft) return;
-  const status = $('#save-status'); if (!status) return;
-  status.textContent = message || (saving ? 'Saving…' : saveFailure || (dirty ? 'Unsaved changes' : 'All changes saved'));
-  status.className = dirty ? 'save-status unsaved' : 'save-status';
-  $('#save-node').disabled = !!saving || !dirty;
+  $("#save-status").textContent = saving
+    ? "Saving…"
+    : saveError || (dirty ? "Unsaved changes" : "All changes saved");
+  $("#save-status").classList.toggle("unsaved", dirty);
+  $("#save-node").disabled = !!saving || !dirty;
 }
-function displayGraph() {
-  const nodes = graph.nodes.map(n => draft?.id === n.id ? draft : n);
-  scene?.update(nodes, graph.edges, selected);
-  $('#node-count').textContent = String(graph.nodes.length).padStart(2, '0');
-  $('#empty-space').hidden = !loaded || graph.nodes.length > 0 || !scene;
-  $('#scene-status').innerHTML = `<span class="status-dot"></span> ${graph.nodes.length} ${graph.nodes.length === 1 ? 'thought' : 'thoughts'} <i>·</i> ${graph.edges.length} ${graph.edges.length === 1 ? 'connection' : 'connections'}`;
+function renderWorld() {
+  $("#world-count").textContent = graph.nodes.length;
+  $("#loose-count").textContent = documents().filter((n) => !n.dimId).length;
+  $("#edge-count").textContent = graph.edges.length;
+  $("#trash-count").textContent = trash.length;
+  $("#dim-list").innerHTML = dims().length
+    ? dims()
+        .filter((n) =>
+          (n.title + " " + n.content)
+            .toLowerCase()
+            .includes(query.toLowerCase()),
+        )
+        .map(
+          (n) =>
+            `<div class="dim-nav ${activeDim === n.id ? "active" : ""}"><button data-room="${esc(n.id)}" title="Focus ${esc(n.title)}">${dot(n)}<span class="sidebar-label">${esc(n.title)}</span><small>${documents().filter((c) => c.dimId === n.id).length}</small></button><button data-open="${esc(n.id)}" class="enter-room sidebar-label" aria-label="Enter ${esc(n.title)}">↗</button></div>`,
+        )
+        .join("")
+    : '<p class="nav-empty sidebar-label">A Dim is a room for a topic.<br>Give your first one a name.</p>';
+  const list = documents().filter(
+    (n) =>
+      (query || scope !== "loose" || !n.dimId) &&
+      (query || !activeDim || n.dimId === activeDim) &&
+      (filter === "all" || n.type === filter) &&
+      `${n.title} ${n.content} ${preview(n)} ${n.type === "table" ? n.payload.rows.flat().join(" ") : ""}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
+  );
+  $("#node-list").innerHTML = list.length
+    ? list
+        .map(
+          (n) =>
+            `<div class="doc-list-row ${multi.has(n.id) ? "checked" : ""}"><button class="select-check" data-toggle="${n.id}" aria-label="Select ${esc(n.title)}" aria-pressed="${multi.has(n.id)}">${multi.has(n.id) ? "✓" : "□"}</button><button data-open="${n.id}" class="doc-list-button" title="${esc(n.title)}">${dot(n)}<span><strong>${esc(n.title)}</strong><small>${n.dimId ? esc(get(n.dimId)?.title) + " · " + (n.area === "desk" ? "Desk" : "Storage") : "Independent document"}</small></span></button></div>`,
+        )
+        .join("")
+    : '<p class="nav-empty sidebar-label">No matching documents.</p>';
+  document
+    .querySelectorAll("[data-scope]")
+    .forEach((b) =>
+      b.classList.toggle("active", b.dataset.scope === scope && !activeDim),
+    );
+  $("#world-title").textContent = activeDim
+    ? get(activeDim)?.title
+    : scope === "loose"
+      ? "Independent documents"
+      : "My world";
+  $("#world-stats").textContent =
+    `${dims().length} Dims  /  ${documents().length} documents  /  ${graph.edges.length} connections`;
+  $("#dim-focus").hidden = !activeDim;
+  if (activeDim) {
+    const n = get(activeDim);
+    $("#dim-focus").innerHTML =
+      `<span class="eyebrow">YOU’RE EXPLORING</span><h2>${esc(n.title)}</h2><p>${documents().filter((c) => c.dimId === n.id && c.area === "desk").length} on Desk · ${documents().filter((c) => c.dimId === n.id && c.area === "storage").length} in Storage</p><button class="dark-primary" data-open="${n.id}">Enter Dim ↗</button><button class="dark-quiet" data-show-all>Back to my world</button>`;
+  }
+  if (loaded && !graph.nodes.length && scene)
+    notice(
+      '<span class="empty-mark">◇</span><h2>Build a world around your ideas.</h2><p>Create your first Dim, or leave a document out in the open.</p><button class="primary" data-new-dim>＋ Create a Dim</button><button class="secondary" data-create="note">New independent note</button>',
+    );
+  else if (scene) $("#world-notice").hidden = true;
+  scene?.update(
+    graph.nodes.map((n) => (draft?.id === n.id ? draft : n)),
+    graph.edges,
+    draft ? [draft.id] : [...multi],
+  );
+  renderSelection();
 }
-function renderList() {
-  const query = search.toLocaleLowerCase().trim();
-  const nodes = graph.nodes.filter(n => (filter === 'all' || n.type === filter) && `${n.title} ${n.content} ${preview(n)} ${n.type === 'table' ? n.payload.rows.flat().join(' ') : ''}`.toLocaleLowerCase().includes(query));
-  $('#node-list').innerHTML = nodes.length ? nodes.map(n => `<button class="node-list-item ${selected === n.id ? 'selected' : ''}" data-open="${escape(n.id)}" ${selected === n.id ? 'aria-current="true"' : ''}><span class="node-type-icon" style="--type-color:${palette[n.type]}">${icons[n.type]}</span><span class="node-list-copy"><span class="node-list-title">${escape(n.title)}</span><span class="node-list-preview">${escape(preview(n).replace(/\n/g, ' ') || typeNames[n.type])}</span></span><span class="node-list-chevron">›</span></button>`).join('') : `<p class="list-message">${graph.nodes.length ? 'No matching thoughts.<br>Try another search or filter.' : 'A fresh start.<br>Add your first thought below.'}</p>`;
-  for (const button of document.querySelectorAll('[data-filter]')) { const active = button.dataset.filter === filter; button.classList.toggle('active', active); button.setAttribute('aria-pressed', active); }
+function notice(html) {
+  $("#world-notice").innerHTML = html;
+  $("#world-notice").hidden = false;
 }
-async function decision({ title, message, buttons }) {
-  const dialog = $('#decision-dialog');
-  $('#dialog-content').innerHTML = `<h2>${escape(title)}</h2><p>${escape(message)}</p><div class="dialog-actions">${buttons.map(b => `<button data-answer="${b.value}" class="${b.class || 'secondary'}">${escape(b.label)}</button>`).join('')}</div>`;
-  dialog.showModal();
-  return new Promise(resolve => {
-    const finish = answer => { dialog.removeEventListener('click', onClick); dialog.removeEventListener('cancel', onCancel); dialog.close(); resolve(answer); };
-    const onClick = e => { const button = e.target.closest('[data-answer]'); if (button) finish(button.dataset.answer); };
-    const onCancel = e => { e.preventDefault(); finish('cancel'); };
-    dialog.addEventListener('click', onClick); dialog.addEventListener('cancel', onCancel);
+function setCollapsed(value) {
+  $("#sidebar").classList.toggle("collapsed", value);
+  $("#collapse").setAttribute(
+    "aria-label",
+    value ? "Expand sidebar" : "Collapse sidebar",
+  );
+  $("#collapse").title = value ? "Expand sidebar" : "Collapse sidebar";
+  safeSet("dimention:sidebar", value ? "collapsed" : "open");
+}
+function setMode(next) {
+  mode = next;
+  document.querySelectorAll("[data-mode]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.mode === mode);
+    b.setAttribute("aria-pressed", b.dataset.mode === mode);
+  });
+  scene?.setMode(mode, $("#move-axis").value, $("#snap").checked);
+  $("#controls-hint").textContent =
+    mode === "multi"
+      ? "Click cards or checkboxes to select · Align, snap, or move them together"
+      : mode === "move"
+        ? "Drag a card or a selection · Movement saves automatically · Snap uses 50 units"
+        : mode === "pan"
+          ? "Drag to pan · Scroll to zoom"
+          : "Drag empty space to orbit · Scroll to zoom · Shift-click to select";
+}
+function toggle(id) {
+  multi.has(id) ? multi.delete(id) : multi.add(id);
+  renderWorld();
+}
+function renderSelection() {
+  const el = $("#selection-bar");
+  el.hidden = !multi.size;
+  if (!multi.size) return;
+  const onlyDocs = [...multi].every((id) => get(id)?.type !== "dim");
+  el.innerHTML = `<div class="selection-title"><strong>${multi.size} selected</strong><button data-clear-selection aria-label="Clear selection">×</button></div><div class="selection-tools"><button data-snap-selection>Snap to grid</button><span>Align</span>${["x", "y", "z"].map((a) => `<button data-align="${a}">${a.toUpperCase()}</button>`).join("")}<button data-move-selection>Move together</button></div><div class="selection-offset">${["x", "y", "z"].map((a) => `<label>${a.toUpperCase()}<input type="number" id="offset-${a}" value="0" min="-10000" max="10000" aria-label="${a.toUpperCase()} offset"></label>`).join("")}<button data-offset-selection>Apply offset</button></div>${
+    onlyDocs
+      ? `<div class="selection-organize"><select id="batch-dim" aria-label="Move selected documents to Dim"><option value="">Independent</option>${dims()
+          .map((n) => `<option value="${n.id}">${esc(n.title)}</option>`)
+          .join(
+            "",
+          )}</select><select id="batch-area" aria-label="Selected document area"><option value="desk">Desk</option><option value="storage">Storage</option></select><button data-organize>Assign</button></div>`
+      : ""
+  }`;
+}
+async function movePositions(positions, { undo = true } = {}) {
+  if (busy || saving) {
+    renderWorld();
+    return;
+  }
+  busy = true;
+  const before = positions
+    .map((p) => get(p.id))
+    .filter(Boolean)
+    .map((n) => ({ id: n.id, x: n.x, y: n.y, z: n.z }));
+  try {
+    graph = await api("/positions", { method: "PATCH", body: { positions } });
+    renderWorld();
+    toast(
+      "Position saved.",
+      false,
+      undo
+        ? {
+            label: "Undo move",
+            run: () => movePositions(before, { undo: false }),
+          }
+        : null,
+    );
+  } catch (e) {
+    renderWorld();
+    toast(e.message, true);
+  } finally {
+    busy = false;
+  }
+}
+
+function modal(html, { wide = false } = {}) {
+  if ($("#dialog").open) $("#dialog").close();
+  $("#dialog").classList.toggle("wide", wide);
+  $("#dialog-content").innerHTML = html;
+  $("#dialog").showModal();
+}
+async function choice(title, message, buttons) {
+  modal(
+    `<h2>${esc(title)}</h2><p>${esc(message)}</p><div class="dialog-actions">${buttons.map((b) => `<button data-answer="${b.value}" class="${b.primary ? "primary" : "secondary"}">${esc(b.label)}</button>`).join("")}</div>`,
+  );
+  return new Promise((resolve) => {
+    const dialog = $("#dialog");
+    const done = (v) => {
+      dialog.removeEventListener("click", click);
+      dialog.removeEventListener("cancel", cancel);
+      dialog.close();
+      resolve(v);
+    };
+    const click = (e) => {
+      const b = e.target.closest("[data-answer]");
+      if (b) done(b.dataset.answer);
+    };
+    const cancel = (e) => {
+      e.preventDefault();
+      done("cancel");
+    };
+    dialog.addEventListener("click", click);
+    dialog.addEventListener("cancel", cancel);
   });
 }
 async function guard() {
-  if (saving && !await saving) return false;
+  if (saving && !(await saving)) return false;
   if (!dirty) return true;
-  const answer = await decision({ title: 'Keep your changes?', message: `“${draft.title || 'Untitled'}” has unsaved edits. Save them before moving on.`, buttons: [{ value: 'cancel', label: 'Keep editing' }, { value: 'discard', label: 'Discard' }, { value: 'save', label: 'Save & continue', class: 'primary' }] });
-  if (answer === 'save') return save();
-  if (answer === 'discard') {
-    forget(draft.id); draft = clone(graph.nodes.find(n => n.id === selected)); dirty = false; saveFailure = '';
-    renderEditor(); displayGraph(); return true;
+  const answer = await choice(
+    "Keep your changes?",
+    `“${draft.title || "Untitled"}” has unsaved edits.`,
+    [
+      { value: "cancel", label: "Keep editing" },
+      { value: "discard", label: "Discard" },
+      { value: "save", label: "Save & continue", primary: true },
+    ],
+  );
+  if (answer === "save") return save();
+  if (answer === "discard") {
+    forget(draft.id);
+    draft = clone(get(draft.id));
+    dirty = false;
+    saveError = "";
+    renderEditor();
+    renderWorld();
+    return true;
   }
   return false;
 }
 async function navigate(action) {
-  if (navigating) return; navigating = true;
+  if (busy) return;
+  busy = true;
   try {
     if (await guard()) {
-      // A create request must finish before the previous editor can be edited again.
-      if ($('#editor-fields')) $('#editor-fields').disabled = true;
+      if ($("#editor-fields")) $("#editor-fields").disabled = true;
       await action();
     }
-  } catch (error) { toast(error.message, true); }
-  finally { navigating = false; if ($('#editor-fields')) $('#editor-fields').disabled = false; }
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    busy = false;
+    if ($("#editor-fields")) $("#editor-fields").disabled = false;
+  }
 }
-function openNode(id, focus = true) {
-  if (id === selected) { if (focus) scene?.focus(id); return; }
-  return navigate(() => openNow(id, focus));
+async function editorTransition(open, id) {
+  const el = $("#editor");
+  if (reduced()) return;
+  const r = scene?.rect(id) || {
+    x: innerWidth / 2 - 100,
+    y: innerHeight / 2 - 60,
+    width: 200,
+    height: 120,
+  };
+  const x = Math.max(-100, Math.min(innerWidth - 80, r.x)),
+    y = Math.max(0, Math.min(innerHeight - 60, r.y)),
+    sx = Math.max(0.07, Math.min(0.8, r.width / innerWidth)),
+    sy = Math.max(0.07, Math.min(0.8, r.height / innerHeight));
+  const small = {
+      transform: `translate(${x}px,${y}px) scale(${sx},${sy})`,
+      opacity: 0.2,
+      borderRadius: "30px",
+    },
+    large = {
+      transform: "translate(0,0) scale(1,1)",
+      opacity: 1,
+      borderRadius: "0px",
+    };
+  await el
+    .animate(open ? [small, large] : [large, small], {
+      duration: open ? 380 : 300,
+      easing: "cubic-bezier(.22,.8,.25,1)",
+      fill: "none",
+    })
+    .finished.catch(() => {});
 }
-function openNow(id, focus = true) {
-  const node = graph.nodes.find(n => n.id === id); if (!node) return;
-  selected = id; const recovered = recover(node); draft = recovered || clone(node); dirty = !!recovered;
-  saveFailure = '';
-  renderEditor(); renderList(); displayGraph();
-  if (focus) requestAnimationFrame(() => scene?.focus(id));
-  if (recovered) toast('Recovered an unsaved draft. Review it, then save your changes.');
+async function openNow(id, { follow = false } = {}) {
+  const n = get(id);
+  if (!n) return;
+  const wasOpen = !!draft;
+  if (follow && draft) trail.push(draft.id);
+  else if (!wasOpen) trail = [];
+  const recoveredDraft = recovered(n);
+  draft = recoveredDraft || clone(n);
+  dirty = !!recoveredDraft;
+  saveError = "";
+  renderEditor();
+  renderWorld();
+  $("#world").inert = true;
+  $("#sidebar").inert = true;
+  if (!wasOpen) await editorTransition(true, id);
+  else if (!reduced())
+    await $("#editor")
+      .animate(
+        [
+          { opacity: 0.55, transform: "translateY(8px)" },
+          { opacity: 1, transform: "none" },
+        ],
+        { duration: 180 },
+      )
+      .finished.catch(() => {});
+  $("#node-title").focus({ preventScroll: true });
+  if (recoveredDraft)
+    toast("Recovered your unsaved draft. Review it and save.");
 }
-function closeNow() { selected = null; draft = null; dirty = false; $('#editor').hidden = true; renderList(); displayGraph(); }
+function openNode(id, follow = false) {
+  return navigate(() => openNow(id, { follow }));
+}
+async function closeNow() {
+  if (!draft) return;
+  const id = draft.id;
+  if (trail.length) scene?.focus(id);
+  await editorTransition(false, id);
+  draft = null;
+  dirty = false;
+  trail = [];
+  $("#editor").hidden = true;
+  $("#world").inert = false;
+  $("#sidebar").inert = false;
+  renderWorld();
+  $("#canvas-container canvas")?.focus({ preventScroll: true });
+}
+function memberCards(id, area) {
+  const members = documents().filter((n) => n.dimId === id && n.area === area);
+  return members.length
+    ? members
+        .map(
+          (n) =>
+            `<button class="room-document" data-follow="${n.id}">${dot(n)}<strong>${esc(n.title)}</strong><p>${esc(preview(n).slice(0, 150) || "Open this document")}</p><span>${typeNames[n.type]} ↗</span></button>`,
+        )
+        .join("")
+    : `<div class="room-empty">${area === "desk" ? "A clear desk. A fresh start." : "A home for everything worth keeping."}<small>${area === "desk" ? "Add a workflow or bring a document here." : "Add notes, ideas, or tables to this room."}</small></div>`;
+}
 function renderEditor() {
-  const node = draft;
-  $('#editor').hidden = false;
-  $('#editor').innerHTML = `
-    <header class="editor-header"><span class="type-chip" style="--type-color:${palette[node.type]}">${icons[node.type]} ${typeNames[node.type]}</span><div><button id="focus-node" class="quiet" title="Focus this node in space" aria-label="Focus node">⛶</button><button id="close-editor" class="quiet" aria-label="Close editor">×</button></div></header>
-    <form id="editor-form" class="editor-body"><fieldset id="editor-fields">
-      <div class="editor-intro"><span class="eyebrow">THOUGHT DETAILS</span><label for="node-title">Title</label><input id="node-title" class="title-input" maxlength="160" required value="${escape(node.title)}" placeholder="Give this thought a name"></div>
-      <label for="node-content">${node.type === 'note' || node.type === 'idea' ? 'Your thoughts' : 'Description'}</label><textarea id="node-content" class="content-input ${['note', 'idea'].includes(node.type) ? 'long-content' : ''}" maxlength="100000" placeholder="Start anywhere. Follow the thought…">${escape(node.content)}</textarea>
-      <div id="structured-editor"></div>
-      <section class="editor-section"><div class="section-title"><h2>Position in space</h2><span>X / Y / Z</span></div><div class="coordinates">${['x', 'y', 'z'].map(axis => `<label><span class="axis-${axis}">${axis.toUpperCase()}${axis === 'z' ? ' · depth' : ''}</span><input id="position-${axis}" data-coordinate="${axis}" type="number" min="-5000" max="5000" step="any" required value="${node[axis]}" aria-label="${axis.toUpperCase()} coordinate"></label>`).join('')}</div><p class="field-hint">Drag in Move mode, or enter exact coordinates.</p></section>
-      <section class="editor-section"><div class="section-title"><h2>Connections</h2><span id="connection-count"></span></div><div id="connection-list"></div><div class="connection-create"><label for="connection-target">Connect to</label><select id="connection-target"><option value="">Choose a destination…</option>${graph.nodes.filter(n => n.id !== node.id).map(n => `<option value="${escape(n.id)}">${escape(n.title)}</option>`).join('')}</select><label for="connection-label">Label <span class="optional">(optional)</span></label><input id="connection-label" maxlength="80" placeholder="e.g. inspires, depends on…"><button type="button" id="add-connection" class="secondary full-width">＋ Add directed connection</button><p class="field-hint">Connections are saved immediately.</p></div></section>
-      <div class="node-metadata">Created ${escape(new Date(node.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}</div>
-    </fieldset></form>
-    <footer class="editor-footer"><div id="save-status" class="save-status" role="status"></div><div class="editor-actions"><button id="delete-node" class="danger-quiet" aria-label="Delete node">Delete</button><button id="save-node" class="primary" type="submit" form="editor-form">Save changes <kbd>Ctrl S</kbd></button></div></footer>`;
-  renderPayload(); renderConnections(); updateSaveStatus();
-  $('#editor-form').addEventListener('submit', event => { event.preventDefault(); save(); });
-  $('#editor-form').addEventListener('input', onEditorInput);
-  $('#editor-form').addEventListener('click', onEditorAction);
-  $('#close-editor').onclick = () => navigate(closeNow);
-  $('#focus-node').onclick = () => scene?.focus(selected);
-  $('#delete-node').onclick = deleteSelected;
-}
-function renderPayload() {
-  if (draft.type === 'workflow') {
-    const steps = draft.payload.steps;
-    $('#structured-editor').innerHTML = `<section class="editor-section"><div class="section-title"><h2>Steps</h2><span id="step-progress">${steps.filter(s => s.done).length} / ${steps.length} complete</span></div><ol class="workflow-steps">${steps.map((step, i) => `<li><span class="step-number">${i + 1}</span><input type="checkbox" data-step-done="${i}" aria-label="Complete step ${i + 1}" ${step.done ? 'checked' : ''}><input class="step-text ${step.done ? 'completed' : ''}" data-step-text="${i}" value="${escape(step.text)}" maxlength="2000" placeholder="What happens next?" aria-label="Step ${i + 1}"><button type="button" data-remove-step="${i}" class="remove-small" aria-label="Remove step ${i + 1}">×</button></li>`).join('')}</ol><button type="button" id="add-step" class="secondary" ${steps.length >= 200 ? 'disabled' : ''}>＋ Add step</button><p class="field-hint">Up to 200 steps.</p></section>`;
-  } else if (draft.type === 'table') {
-    const { columns, rows } = draft.payload;
-    $('#structured-editor').innerHTML = `<section class="editor-section"><div class="section-title"><h2>Your table</h2><span>${rows.length} rows · ${columns.length} columns</span></div><div class="table-scroll"><table class="data-table"><thead><tr>${columns.map((column, i) => `<th><div><input data-column="${i}" value="${escape(column)}" maxlength="80" aria-label="Column ${i + 1} name"><button type="button" data-remove-column="${i}" class="remove-small" aria-label="Remove column ${i + 1}" ${columns.length <= 1 ? 'disabled' : ''}>×</button></div></th>`).join('')}<th class="row-action"></th></tr></thead><tbody>${rows.map((row, ri) => `<tr>${row.map((cell, ci) => `<td><input data-cell="${ri},${ci}" value="${escape(cell)}" maxlength="2000" aria-label="Row ${ri + 1}, column ${ci + 1}"></td>`).join('')}<td><button type="button" data-remove-row="${ri}" class="remove-small" aria-label="Remove row ${ri + 1}">×</button></td></tr>`).join('')}</tbody></table></div><div class="table-actions"><button type="button" id="add-row" class="secondary" ${rows.length >= 200 ? 'disabled' : ''}>＋ Row</button><button type="button" id="add-column" class="secondary" ${columns.length >= 12 ? 'disabled' : ''}>＋ Column</button></div><p class="field-hint">1–12 columns · Up to 200 rows · Scroll sideways for more.</p></section>`;
-  } else $('#structured-editor').innerHTML = '';
+  const n = draft;
+  if (!n) return;
+  $("#editor").hidden = false;
+  $("#editor").innerHTML =
+    `<header class="editor-header"><div class="editor-navigation"><button id="close-editor" class="back-world">← <span>Back to 3D</span></button>${trail.length ? '<button id="previous-document" class="secondary">← Previous</button>' : ""}<span class="editor-breadcrumb">${n.type === "dim" ? "YOUR DIM" : n.dimId ? esc(get(n.dimId)?.title) + " / " + (n.area === "desk" ? "Desk" : "Storage") : "INDEPENDENT DOCUMENT"}</span></div><div class="editor-header-actions"><span id="save-status" role="status"></span><button id="save-node" class="primary" type="submit" form="editor-form">Save changes <kbd>⌘ S</kbd></button></div></header>
+<form id="editor-form"><fieldset id="editor-fields"><div class="editor-layout"><div class="editor-page"><div class="document-type">${dot(n)}<span>${typeNames[n.type]}</span></div><label for="node-title" class="sr-only">Title</label><input id="node-title" class="title-input" maxlength="160" required value="${esc(n.title)}" placeholder="Untitled ${n.type}"><label for="node-content" class="content-label">${n.type === "dim" ? "What belongs in this Dim?" : n.type === "note" || n.type === "idea" ? "Your thoughts" : "Description"}</label><textarea id="node-content" maxlength="100000" class="content-input ${["note", "idea"].includes(n.type) ? "long-content" : ""}" placeholder="Start with a thought…">${esc(n.content)}</textarea>
+${n.type === "dim" ? `<div class="dim-boards"><section class="room-section"><div class="room-section-heading"><div><span class="eyebrow">MAKE THINGS HAPPEN</span><h2>Desk<span>${documents().filter((c) => c.dimId === n.id && c.area === "desk").length}</span></h2></div><button type="button" class="secondary" data-create="workflow" data-parent="${n.id}" data-area="desk">＋ Add workflow</button></div><div class="room-documents">${memberCards(n.id, "desk")}</div></section><section class="room-section"><div class="room-section-heading"><div><span class="eyebrow">KEEP WHAT MATTERS</span><h2>Storage<span>${documents().filter((c) => c.dimId === n.id && c.area === "storage").length}</span></h2></div><button type="button" class="secondary" data-room-create="${n.id}">＋ Add document</button></div><div class="room-documents">${memberCards(n.id, "storage")}</div></section></div>` : '<div id="structured-editor"></div>'}</div>
+<aside class="document-details"><h2>${n.type === "dim" ? "Room details" : "Document details"}</h2>${
+      n.type === "dim"
+        ? `<label for="dim-color">Room accent</label><input type="color" id="dim-color" value="${n.payload.color}"><p class="field-hint">A Dim and its contents move together.</p>`
+        : `<label for="document-dim">Lives in</label><select id="document-dim"><option value="">Independent document</option>${dims()
+            .map(
+              (d) =>
+                `<option value="${d.id}" ${d.id === n.dimId ? "selected" : ""}>${esc(d.title)}</option>`,
+            )
+            .join(
+              "",
+            )}</select><label for="document-area">Use it for</label><select id="document-area"><option value="desk" ${n.area === "desk" ? "selected" : ""}>Desk · active work</option><option value="storage" ${n.area === "storage" ? "selected" : ""}>Storage · reference</option></select><button type="button" id="place-in-room" class="text-button" ${n.dimId ? "" : "disabled"}>Place at ${n.area === "desk" ? "Desk" : "Storage"} ↗</button>`
+    }
+<details class="position-details"><summary>Position in space</summary><div class="coordinates">${["x", "y", "z"].map((a) => `<label>${a.toUpperCase()}<input type="number" data-coordinate="${a}" aria-label="${a.toUpperCase()} coordinate" required min="-5000" max="5000" step="any" value="${n[a]}"></label>`).join("")}</div><button id="focus-on-return" type="button" class="text-button">Focus in 3D on return</button></details>
+<section class="document-connections"><div class="details-heading"><h2>Connections</h2><span>${graph.edges.filter((e) => e.source === n.id || e.target === n.id).length}</span></div><div id="connection-list"></div><label for="connection-search">Find a destination</label><input id="connection-search" type="search" placeholder="Search Dims and documents…"><label for="connection-target" class="sr-only">Connection destination</label><select id="connection-target"><option value="">Choose a destination…</option>${graph.nodes
+      .filter((d) => d.id !== n.id)
+      .map(
+        (d) =>
+          `<option value="${d.id}">${d.type === "dim" ? "◇ " : ""}${esc(d.title)}</option>`,
+      )
+      .join(
+        "",
+      )}</select><label for="connection-label">Relationship <span>(optional)</span></label><input id="connection-label" maxlength="80" placeholder="e.g. inspires, depends on"><button type="button" id="add-connection" class="secondary full-width">＋ Connect</button><p class="field-hint">Links save immediately. Follow a card to open it.</p></section><div class="document-bottom"><span>Created ${esc(new Date(n.createdAt).toLocaleDateString())}</span><button type="button" id="trash-node" class="danger-text">Move ${n.type === "dim" ? "Dim" : "document"} to Trash</button></div></aside></div></fieldset></form>`;
+  if (n.type !== "dim") renderPayload(draft, $("#structured-editor"));
+  renderConnections();
+  saveStatus();
+  $("#editor-form").onsubmit = (e) => {
+    e.preventDefault();
+    save();
+  };
+  $("#editor-form").oninput = editorInput;
+  $("#editor-form").onclick = editorAction;
+  $("#close-editor").onclick = () => navigate(closeNow);
+  if ($("#previous-document"))
+    $("#previous-document").onclick = () =>
+      navigate(() => openNow(trail.pop()));
+  $("#trash-node").onclick = () => trashNode(n.id);
+  $("#focus-on-return").onclick = () => {
+    scene?.focus(n.id);
+    toast("The 3D view is focused on this item.");
+  };
+  $("#connection-search").oninput = (e) => {
+    const q = e.target.value.toLowerCase();
+    $("#connection-target").innerHTML =
+      '<option value="">Choose a destination…</option>' +
+      graph.nodes
+        .filter((d) => d.id !== n.id && d.title.toLowerCase().includes(q))
+        .map(
+          (d) =>
+            `<option value="${d.id}">${d.type === "dim" ? "◇ " : ""}${esc(d.title)}</option>`,
+        )
+        .join("");
+  };
 }
 function renderConnections() {
-  if (!draft || !$('#connection-list')) return;
-  const edges = graph.edges.filter(e => e.source === selected || e.target === selected);
-  $('#connection-count').textContent = edges.length;
-  $('#connection-list').innerHTML = edges.length ? edges.map(edge => {
-    const outgoing = edge.source === selected; const otherId = outgoing ? edge.target : edge.source;
-    const other = graph.nodes.find(n => n.id === otherId);
-    return `<div class="connection-item"><span class="connection-arrow" title="${outgoing ? 'Outgoing' : 'Incoming'}">${outgoing ? '↗' : '↙'}</span><button type="button" data-follow="${escape(otherId)}" class="connection-follow"><span>${escape(other?.title || 'Missing node')}</span><small>${outgoing ? 'Outgoing' : 'Incoming'}${edge.label ? ' · ' + escape(edge.label) : ''}</small></button><button type="button" data-remove-edge="${escape(edge.id)}" class="remove-small" aria-label="Remove connection to ${escape(other?.title)}">×</button></div>`;
-  }).join('') : '<p class="field-hint connections-empty">No connections yet. Where could this thought lead?</p>';
+  if (!draft) return;
+  const links = graph.edges.filter(
+    (e) => e.source === draft.id || e.target === draft.id,
+  );
+  $("#connection-list").innerHTML = links.length
+    ? links
+        .map((e) => {
+          const outgoing = e.source === draft.id,
+            other = get(outgoing ? e.target : e.source);
+          return `<div class="connection-card"><button type="button" data-follow="${other.id}"><small>${outgoing ? "OUTGOING ↗" : "INCOMING ↙"}${e.label ? " / " + esc(e.label) : ""}</small><strong>${dot(other)}${esc(other.title)}<span>→</span></strong><span>${typeNames[other.type]}${other.dimId ? " · " + esc(get(other.dimId)?.title) : ""}</span></button><button type="button" data-remove-edge="${e.id}" aria-label="Remove connection to ${esc(other.title)}">×</button></div>`;
+        })
+        .join("")
+    : '<p class="connections-empty">What does this connect to?</p>';
 }
-function onEditorInput(event) {
-  const element = event.target, d = element.dataset;
-  if (element.id === 'node-title') draft.title = element.value;
-  else if (element.id === 'node-content') draft.content = element.value;
+function editorInput(e) {
+  const el = e.target,
+    d = el.dataset;
+  if (el.id === "node-title") draft.title = el.value;
+  else if (el.id === "node-content") draft.content = el.value;
+  else if (el.id === "dim-color") draft.payload.color = el.value;
+  else if (el.id === "document-dim") {
+    draft.dimId = el.value || null;
+    $("#place-in-room").disabled = !draft.dimId;
+  } else if (el.id === "document-area") draft.area = el.value;
   else if (d.coordinate !== undefined) {
-    if (element.value === '' || !element.validity.valid) { dirty = true; updateSaveStatus(); return; }
-    draft[d.coordinate] = Number(element.value); displayGraph();
-  } else if (d.stepText !== undefined) draft.payload.steps[Number(d.stepText)].text = element.value;
+    if (!el.validity.valid || el.value === "") {
+      dirty = true;
+      saveStatus();
+      return;
+    }
+    draft[d.coordinate] = Number(el.value);
+  } else if (d.stepText !== undefined)
+    draft.payload.steps[+d.stepText].text = el.value;
   else if (d.stepDone !== undefined) {
-    draft.payload.steps[Number(d.stepDone)].done = element.checked;
-    element.parentElement.querySelector('.step-text').classList.toggle('completed', element.checked);
-    $('#step-progress').textContent = `${draft.payload.steps.filter(s => s.done).length} / ${draft.payload.steps.length} complete`;
-  } else if (d.column !== undefined) draft.payload.columns[Number(d.column)] = element.value;
-  else if (d.cell !== undefined) { const [r, c] = d.cell.split(',').map(Number); draft.payload.rows[r][c] = element.value; }
-  else return;
+    draft.payload.steps[+d.stepDone].done = el.checked;
+    el.parentElement
+      .querySelector(".step-text")
+      .classList.toggle("completed", el.checked);
+    $("#step-progress").textContent =
+      `${draft.payload.steps.filter((s) => s.done).length} / ${draft.payload.steps.length} complete`;
+  } else if (d.column !== undefined)
+    draft.payload.columns[+d.column] = el.value;
+  else if (d.cell !== undefined) {
+    const [r, c] = d.cell.split(",").map(Number);
+    draft.payload.rows[r][c] = el.value;
+  } else return;
   markDirty();
 }
-async function onEditorAction(event) {
-  const button = event.target.closest('button'); if (!button || button.disabled) return;
-  const d = button.dataset;
-  if (d.follow) return openNode(d.follow);
-  if (d.removeEdge) {
-    button.disabled = true;
-    try { await api(`/connections/${d.removeEdge}`, { method: 'DELETE' }); graph.edges = graph.edges.filter(e => e.id !== d.removeEdge); renderConnections(); displayGraph(); toast('Connection removed.'); }
-    catch (error) { toast(error.message, true); button.disabled = false; } return;
+async function editorAction(e) {
+  const b = e.target.closest("button");
+  if (!b || b.disabled) return;
+  const d = b.dataset;
+  if (d.follow || d.create || d.roomCreate || d.removeEdge) return;
+  if (b.id === "add-connection") {
+    const target = $("#connection-target").value;
+    if (!target) {
+      toast("Choose a destination first.");
+      return;
+    }
+    const source = draft.id,
+      label = $("#connection-label").value;
+    b.disabled = true;
+    try {
+      const edge = await api("/connections", {
+        method: "POST",
+        body: { source, target, label },
+      });
+      graph.edges.push(edge);
+      renderConnections();
+      $("#connection-label").value = "";
+      renderWorld();
+      toast("Connected.");
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      b.disabled = false;
+    }
+    return;
   }
-  if (button.id === 'add-connection') {
-    const target = $('#connection-target').value; if (!target) { toast('Choose a destination first.'); $('#connection-target').focus(); return; }
-    const label = $('#connection-label').value; button.disabled = true;
-    try { const edge = await api('/connections', { method: 'POST', body: { source: selected, target, label } }); graph.edges.push(edge); renderConnections(); displayGraph(); $('#connection-label').value = ''; toast('Connection saved.'); }
-    catch (error) { toast(error.message, true); } finally { button.disabled = false; } return;
+  if (b.id === "place-in-room") {
+    Object.assign(draft, placement(draft.dimId, draft.area));
+    markDirty();
+    renderEditor();
+    return;
   }
-  if (button.id === 'add-step') { draft.payload.steps.push({ text: '', done: false }); }
-  else if (d.removeStep !== undefined) draft.payload.steps.splice(Number(d.removeStep), 1);
-  else if (button.id === 'add-row') draft.payload.rows.push(draft.payload.columns.map(() => ''));
-  else if (button.id === 'add-column') { draft.payload.columns.push(`Column ${draft.payload.columns.length + 1}`); draft.payload.rows.forEach(row => row.push('')); }
-  else if (d.removeRow !== undefined) draft.payload.rows.splice(Number(d.removeRow), 1);
-  else if (d.removeColumn !== undefined) { const i = Number(d.removeColumn); draft.payload.columns.splice(i, 1); draft.payload.rows.forEach(row => row.splice(i, 1)); }
-  else return;
-  markDirty(); renderPayload();
-  if (button.id === 'add-step') document.querySelector('.workflow-steps li:last-child .step-text')?.focus();
+  if (b.id === "add-step") draft.payload.steps.push({ text: "", done: false });
+  else if (d.removeStep !== undefined)
+    draft.payload.steps.splice(+d.removeStep, 1);
+  else if (b.id === "add-row")
+    draft.payload.rows.push(draft.payload.columns.map(() => ""));
+  else if (b.id === "add-column") {
+    draft.payload.columns.push(`Column ${draft.payload.columns.length + 1}`);
+    draft.payload.rows.forEach((r) => r.push(""));
+  } else if (d.removeRow !== undefined)
+    draft.payload.rows.splice(+d.removeRow, 1);
+  else if (d.removeColumn !== undefined) {
+    draft.payload.columns.splice(+d.removeColumn, 1);
+    draft.payload.rows.forEach((r) => r.splice(+d.removeColumn, 1));
+  } else return;
+  markDirty();
+  renderPayload(draft, $("#structured-editor"));
+  if (b.id === "add-step")
+    document.querySelector(".workflow-steps li:last-child .step-text")?.focus();
 }
 function save() {
   if (saving) return saving;
   if (!draft || !dirty) return Promise.resolve(true);
-  if (!$('#editor-form').reportValidity()) return Promise.resolve(false);
+  if (!$("#editor-form").reportValidity()) return Promise.resolve(false);
   const snapshot = clone(draft);
-  saveFailure = '';
-  $('#editor-fields').disabled = true; $('#delete-node').disabled = true;
+  saveError = "";
+  $("#editor-fields").disabled = true;
   saving = (async () => {
     try {
-      const stored = await api(`/nodes/${snapshot.id}`, { method: 'PATCH', body: snapshot });
-      graph.nodes = graph.nodes.map(n => n.id === stored.id ? stored : n);
-      draft = clone(stored); dirty = false; forget(stored.id); renderList(); displayGraph(); return true;
-    } catch (error) { saveFailure = 'Save failed · draft preserved. Try saving again.'; toast(error.message, true); return false; }
-    finally { saving = null; $('#editor-fields').disabled = false; $('#delete-node').disabled = false; updateSaveStatus(); }
-  })(); updateSaveStatus(); return saving;
+      const saved = await api("/nodes/" + snapshot.id, {
+        method: "PATCH",
+        body: snapshot,
+      });
+      const [next, bin] = await Promise.all([api("/workspace"), api("/trash")]);
+      graph = next;
+      trash = bin.nodes;
+      draft = clone(saved);
+      dirty = false;
+      forget(saved.id);
+      renderWorld();
+      return true;
+    } catch (e) {
+      saveError = "Save failed · draft preserved";
+      toast(e.message, true);
+      return false;
+    } finally {
+      saving = null;
+      if ($("#editor-fields")) $("#editor-fields").disabled = false;
+      saveStatus();
+    }
+  })();
+  saveStatus();
+  return saving;
 }
-async function createNode(type) {
+function placement(dimId, area) {
+  const parent = get(dimId);
+  if (parent) {
+    const count = documents().filter(
+      (n) => n.dimId === dimId && n.area === area,
+    ).length;
+    return {
+      x: Math.max(
+        -5000,
+        Math.min(5000, parent.x + (area === "desk" ? -235 : 235)),
+      ),
+      y: Math.min(5000, parent.y + 55 + Math.floor(count / 2) * 145),
+      z: Math.max(-5000, Math.min(5000, parent.z + (count % 2 ? 130 : -130))),
+    };
+  }
+  const target = scene?.getTarget() || { x: 0, y: 0, z: 0 };
+  return {
+    x: Math.max(
+      -5000,
+      Math.min(5000, target.x + Math.round(Math.random() * 180 - 90)),
+    ),
+    y: Math.max(-5000, Math.min(5000, target.y)),
+    z: Math.max(
+      -5000,
+      Math.min(5000, target.z + Math.round(Math.random() * 180 - 90)),
+    ),
+  };
+}
+function createDocument(
+  type,
+  parent = activeDim,
+  area = type === "workflow" ? "desk" : "storage",
+) {
   return navigate(async () => {
-    const center = scene?.getTarget() || { x: 0, y: 0, z: 0 };
-    for (const key of ['x', 'y', 'z']) center[key] = Math.max(-5000, Math.min(5000, center[key] + Math.round((Math.random() - .5) * 140)));
-    const payload = type === 'workflow' ? { steps: [{ text: 'Your first step', done: false }] } : type === 'table' ? { columns: ['Name', 'Details'], rows: [['', '']] } : {};
-    const node = await api('/nodes', { method: 'POST', body: { type, title: `Untitled ${type}`, content: '', payload, ...center } });
-    graph.nodes.push(node); openNow(node.id); $('#node-title').focus(); $('#node-title').select();
+    if ($("#dialog").open) $("#dialog").close();
+    const payload =
+      type === "workflow"
+        ? { steps: [{ text: "Your first step", done: false }] }
+        : type === "table"
+          ? { columns: ["Name", "Details"], rows: [["", ""]] }
+          : {};
+    const n = await api("/nodes", {
+      method: "POST",
+      body: {
+        type,
+        title: `Untitled ${type}`,
+        content: "",
+        dimId: parent || null,
+        area,
+        payload,
+        ...placement(parent, area),
+      },
+    });
+    graph.nodes.push(n);
+    await openNow(n.id, { follow: !!draft });
+    $("#node-title").select();
   });
 }
-async function deleteSelected() {
-  if (navigating || saving) return; navigating = true;
-  try {
-    const answer = await decision({ title: 'Delete this thought?', message: `“${draft.title || 'Untitled'}”, its unsaved edits, and all its connections will be removed. This cannot be undone.`, buttons: [{ value: 'cancel', label: 'Keep thought' }, { value: 'delete', label: 'Delete thought', class: 'danger' }] });
-    if (answer !== 'delete') return;
-    const id = selected; await api(`/nodes/${id}`, { method: 'DELETE' });
-    graph.nodes = graph.nodes.filter(n => n.id !== id); graph.edges = graph.edges.filter(e => e.source !== id && e.target !== id); forget(id); closeNow(); toast('Thought deleted.');
-  } catch (error) { toast(error.message, true); } finally { navigating = false; }
+function createMenu(parent = activeDim) {
+  modal(
+    `<div class="dialog-heading"><div><span class="eyebrow">CAPTURE SOMETHING</span><h2>New document</h2></div><button data-close-dialog aria-label="Close">×</button></div><p>${parent ? "Add to " + esc(get(parent)?.title) + " · Storage" : "Leave it independent in your world."}</p><div class="create-options">${["note", "idea", "workflow", "table"].map((t) => `<button data-create="${t}" ${parent ? `data-parent="${parent}" data-area="storage"` : ""}>${dot({ type: t })}<strong>${typeNames[t]}</strong><small>${{ note: "Write, collect, reflect", idea: "Give a spark a place", workflow: "Turn a plan into steps", table: "Structure your information" }[t]}</small><span>＋</span></button>`).join("")}</div>`,
+  );
 }
-let mode = 'select';
-function setMode(next) { mode = next; for (const name of ['select', 'move', 'pan']) { $(`#${name}-mode`).classList.toggle('active', mode === name); $(`#${name}-mode`).setAttribute('aria-pressed', mode === name); } $('#move-axis').hidden = mode !== 'move'; scene?.setMode(mode, $('#move-axis').value); $('#control-hint').textContent = mode === 'move' ? 'Drag a card to move · Choose Z for depth · Save to keep changes' : mode === 'pan' ? 'Drag to pan the camera · Scroll to zoom' : 'Drag space to orbit · Right-drag to pan · Scroll to zoom'; }
-$('#select-mode').onclick = () => setMode('select'); $('#move-mode').onclick = () => setMode('move'); $('#pan-mode').onclick = () => setMode('pan'); $('#move-axis').onchange = () => setMode(mode);
-$('#fit-all').onclick = () => scene?.fit(); $('#reset-view').onclick = () => scene?.fit(true);
-$('#search').oninput = event => { search = event.target.value; renderList(); };
-document.addEventListener('click', event => {
-  const button = event.target.closest('button'); if (!button || button.disabled) return;
-  if (button.dataset.create) createNode(button.dataset.create);
-  if (button.dataset.filter) { filter = button.dataset.filter; renderList(); }
-  if (button.dataset.open) openNode(button.dataset.open);
-});
-$('#help').onclick = () => $('#help-dialog').showModal();
-for (const button of document.querySelectorAll('.dialog-close,.close-guide')) button.onclick = () => $('#help-dialog').close();
-$('#export').onclick = () => navigate(async () => {
-  const workspace = await api('/export');
-  const url = URL.createObjectURL(new Blob([JSON.stringify(workspace, null, 2)], { type: 'application/json' }));
-  const anchor = document.createElement('a'); anchor.href = url; anchor.download = `dimention-${new Date().toISOString().slice(0, 10)}.json`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); toast('Workspace exported.');
-});
-window.addEventListener('beforeunload', event => { if (dirty || saving) { event.preventDefault(); event.returnValue = ''; } });
-document.addEventListener('keydown', event => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); if (!document.querySelector('dialog[open]')) save(); }
-  if (document.querySelector('dialog[open]')) return;
-  if (event.key === 'Escape' && selected) { event.preventDefault(); navigate(closeNow); }
-  if (event.key === '/' && !event.target.matches('input,textarea,select')) { event.preventDefault(); $('#search').focus(); }
-});
-async function load() {
-  $('#load-error').hidden = true;
-  try {
-    graph = await api('/workspace'); loaded = true;
-    if (!scene) {
+function newDim() {
+  navigate(async () => {
+    modal(
+      `<div class="dialog-heading"><div><span class="eyebrow">A ROOM OF YOUR OWN</span><h2>Create a Dim</h2></div><button data-close-dialog aria-label="Close">×</button></div><p>A workspace for one topic. A Desk to execute, Storage to collect, and connections to the rest of your world.</p><form id="create-dim-form"><label for="new-dim-title">Name your Dim</label><input id="new-dim-title" maxlength="160" required placeholder="e.g. Design studio, Learning, Life"><label for="new-dim-description">A little context <span>(optional)</span></label><textarea id="new-dim-description" maxlength="100000" placeholder="What will happen in this room?"></textarea><label for="new-dim-color">Room color</label><input id="new-dim-color" type="color" value="#8580ff"><div class="dim-preview"><span>◇</span><div><strong>Your own corner of the world</strong><small>Desk / Execute  ·  Storage / Collect</small></div></div><button class="primary full-width" type="submit">Create Dim ↗</button></form>`,
+    );
+    $("#new-dim-title").focus();
+    $("#create-dim-form").onsubmit = async (e) => {
+      e.preventDefault();
+      if (busy) return;
+      busy = true;
+      const button = e.submitter;
+      button.disabled = true;
       try {
-        scene = createWorkspaceScene($('#canvas-container'), {
-          onSelect: id => openNode(id, false),
-          canMove: id => { if (saving || navigating) return false; if (dirty && selected !== id) { toast('Save or close your current draft before moving another thought.'); return false; } return true; },
-          onMove: (id, position) => { if (selected !== id) openNow(id, false); Object.assign(draft, position); markDirty(); renderEditor(); displayGraph(); toast('Position changed. Save to keep this move.'); },
-          onDrag: position => { $('#scene-status').textContent = `Position: ${position.x} / ${position.y} / ${position.z}`; },
+        const i = dims().length,
+          pos = {
+            x: Math.min(4200, 1200 + (i % 3) * 1300),
+            y: 0,
+            z: Math.min(4200, Math.floor(i / 3) * 1100),
+          };
+        const n = await api("/nodes", {
+          method: "POST",
+          body: {
+            type: "dim",
+            title: $("#new-dim-title").value,
+            content: $("#new-dim-description").value,
+            payload: { color: $("#new-dim-color").value },
+            ...pos,
+          },
         });
-      } catch (error) {
-        $('#canvas-container').replaceChildren(); $('#scene-fallback').hidden = false;
-        document.querySelector('.view-toolbar').hidden = true; $('#control-hint').textContent = 'Your list and editors are fully available.';
+        graph.nodes.push(n);
+        activeDim = n.id;
+        scope = "dim";
+        $("#dialog").close();
+        scene?.update(graph.nodes, graph.edges, []);
+        scene?.focus(n.id);
+        await openNow(n.id, { follow: !!draft });
+      } catch (err) {
+        toast(err.message, true);
+        button.disabled = false;
+      } finally {
+        busy = false;
       }
-    }
-    renderList(); displayGraph(); scene?.fit(true);
-    for (const button of document.querySelectorAll('[data-create],#export')) button.disabled = false;
-    // Recover a saved browser draft on refresh without hiding it in the node list.
-    const recoveredNode = graph.nodes.find(n => recover(n)); if (recoveredNode) openNow(recoveredNode.id);
-  } catch (error) { $('#load-error').hidden = false; $('#load-error-message').textContent = error.message; $('#node-list').innerHTML = '<p class="list-message">Workspace unavailable.</p>'; }
+    };
+  });
 }
-$('#retry').onclick = load;
+async function trashNode(id) {
+  return navigate(async () => {
+    const n = get(id);
+    if (n.type === "dim") {
+      const answer = await choice(
+        "Move this Dim to Trash?",
+        `${n.title} and its ${documents().filter((c) => c.dimId === id).length} documents can be restored together.`,
+        [
+          { value: "cancel", label: "Keep Dim" },
+          { value: "trash", label: "Move to Trash", primary: true },
+        ],
+      );
+      if (answer !== "trash") return;
+    }
+    await api("/nodes/" + id, { method: "DELETE" });
+    forget(id);
+    await closeNow();
+    await refresh();
+    toast("Moved to Trash. Its connections are preserved.", false, {
+      label: "Undo",
+      run: () => restoreNode(id),
+    });
+  });
+}
+async function restoreNode(id) {
+  if (busy) return;
+  busy = true;
+  try {
+    await api("/trash/" + id + "/restore", { method: "POST" });
+    await refresh();
+    if ($("#dialog").open) showTrash();
+    toast("Restored with its available connections.");
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    busy = false;
+  }
+}
+function showTrash() {
+  modal(
+    `<div class="dialog-heading"><div><span class="eyebrow">NOT LOST. JUST SET ASIDE.</span><h2>Trash <small>${trash.length}</small></h2></div><button data-close-dialog aria-label="Close Trash">×</button></div><p>Restore documents with their content, position, and connections. Restoring a Dim also brings back documents trashed with it.</p><div class="trash-list">${trash.length ? trash.map((n) => `<div class="trash-row">${dot(n)}<div><strong>${esc(n.title)}</strong><small>${typeNames[n.type]}${n.dimId ? " · belongs to a Dim" : ""}</small></div><button class="secondary" data-restore="${n.id}">Restore</button></div>`).join("") : '<div class="room-empty">Nothing in Trash.</div>'}</div>`,
+  );
+}
+function browseConnections(highlight = null) {
+  modal(
+    `<div class="dialog-heading"><div><span class="eyebrow">FOLLOW THE THREAD</span><h2>Connections</h2></div><button data-close-dialog aria-label="Close connections">×</button></div><p>Jump directly between rooms and documents. Arrows run from source to destination.</p><input id="link-search" type="search" aria-label="Search connections" placeholder="Search titles or relationships…"><div id="all-connections"></div>`,
+    { wide: true },
+  );
+  const render = () => {
+    const q = $("#link-search").value.toLowerCase();
+    $("#all-connections").innerHTML =
+      graph.edges
+        .filter((e) =>
+          `${get(e.source)?.title} ${get(e.target)?.title} ${e.label}`
+            .toLowerCase()
+            .includes(q),
+        )
+        .map(
+          (e) =>
+            `<div class="route-row ${highlight === e.id ? "highlight" : ""}"><button data-route="${e.source}">${dot(get(e.source))}<strong>${esc(get(e.source).title)}</strong><small>${typeNames[get(e.source).type]}</small></button><div><span>${esc(e.label || "connects to")}</span><b>→</b></div><button data-route="${e.target}">${dot(get(e.target))}<strong>${esc(get(e.target).title)}</strong><small>${typeNames[get(e.target).type]}</small></button></div>`,
+        )
+        .join("") ||
+      '<p class="nav-empty">No matching connections. Open any item to create one.</p>';
+  };
+  $("#link-search").oninput = render;
+  render();
+}
+async function exportJSON() {
+  navigate(async () => {
+    const data = await api("/export"),
+      url = URL.createObjectURL(
+        new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }),
+      ),
+      a = document.createElement("a");
+    a.href = url;
+    a.download = `dimention-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Exported your world, including Trash.");
+  });
+}
+$("#import-file").onchange = (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  navigate(async () => {
+    if (file.size > 32 * 1024 * 1024)
+      throw new Error("Choose a JSON export smaller than 32 MiB.");
+    let data;
+    try {
+      data = JSON.parse(await file.text());
+    } catch {
+      throw new Error("This file is not valid JSON.");
+    }
+    const info = await api("/import", {
+      method: "POST",
+      body: { workspace: data, preview: true },
+    });
+    const answer = await choice(
+      "Bring this world into yours?",
+      `${info.items} items, including ${info.dims} Dims, ${info.connections} connections and ${info.trashed} items in Trash. Existing content stays intact; imported items receive new IDs.`,
+      [
+        { value: "cancel", label: "Cancel" },
+        { value: "import", label: "Import items", primary: true },
+      ],
+    );
+    if (answer !== "import") return;
+    await api("/import", { method: "POST", body: { workspace: data } });
+    await refresh();
+    scene?.fit();
+    toast("Import complete. Existing content is intact.");
+  });
+};
+
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled) return;
+  const d = b.dataset;
+  if (d.newDim !== undefined) return newDim();
+  if (d.create)
+    return createDocument(
+      d.create,
+      d.parent || activeDim,
+      d.area || (d.create === "workflow" ? "desk" : "storage"),
+    );
+  if (d.open)
+    return mode === "multi" && !draft ? toggle(d.open) : openNode(d.open);
+  if (d.follow) return openNode(d.follow, true);
+  if (d.route) {
+    $("#dialog").close();
+    return openNode(d.route, !!draft);
+  }
+  if (d.toggle) return toggle(d.toggle);
+  if (d.room) {
+    activeDim = d.room;
+    scope = "dim";
+    renderWorld();
+    scene?.focus(d.room);
+    return;
+  }
+  if (d.scope || d.showAll !== undefined) {
+    activeDim = null;
+    scope = d.scope || "all";
+    renderWorld();
+    scene?.fit();
+    return;
+  }
+  if (d.mode) return setMode(d.mode);
+  if (d.clearSelection !== undefined) {
+    multi.clear();
+    renderWorld();
+    return;
+  }
+  if (d.closeDialog !== undefined) {
+    $("#dialog").close();
+    return;
+  }
+  if (d.roomCreate) return createMenu(d.roomCreate);
+  if (d.restore) return restoreNode(d.restore);
+  if (d.removeEdge) {
+    b.disabled = true;
+    try {
+      await api("/connections/" + d.removeEdge, { method: "DELETE" });
+      graph.edges = graph.edges.filter((x) => x.id !== d.removeEdge);
+      renderConnections();
+      renderWorld();
+      toast("Connection removed.");
+    } catch (err) {
+      toast(err.message, true);
+      b.disabled = false;
+    }
+    return;
+  }
+  if (d.moveSelection !== undefined) {
+    setMode("move");
+    return;
+  }
+  const chosen = graph.nodes.filter(
+    (n) => multi.has(n.id) && !multi.has(n.dimId),
+  );
+  if (d.snapSelection !== undefined)
+    return movePositions(
+      chosen.map((n) => ({
+        id: n.id,
+        x: Math.round(n.x / 50) * 50,
+        y: Math.round(n.y / 50) * 50,
+        z: Math.round(n.z / 50) * 50,
+      })),
+    );
+  if (d.align) {
+    const a = d.align,
+      mean = chosen.reduce((s, n) => s + n[a], 0) / chosen.length;
+    return movePositions(
+      chosen.map((n) => ({
+        id: n.id,
+        x: n.x,
+        y: n.y,
+        z: n.z,
+        [a]: Math.round(mean),
+      })),
+    );
+  }
+  if (d.offsetSelection !== undefined) {
+    const offset = Object.fromEntries(
+      ["x", "y", "z"].map((a) => [a, Number($("#offset-" + a).value)]),
+    );
+    return movePositions(
+      chosen.map((n) => ({
+        id: n.id,
+        x: n.x + offset.x,
+        y: n.y + offset.y,
+        z: n.z + offset.z,
+      })),
+    );
+  }
+  if (d.organize !== undefined) {
+    if (busy) return;
+    busy = true;
+    try {
+      graph = await api("/organize", {
+        method: "PATCH",
+        body: {
+          ids: [...multi],
+          dimId: $("#batch-dim").value || null,
+          area: $("#batch-area").value,
+        },
+      });
+      renderWorld();
+      toast("Documents moved into their room.");
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      busy = false;
+    }
+  }
+});
+$("#collapse").onclick = () =>
+  setCollapsed(!$("#sidebar").classList.contains("collapsed"));
+setCollapsed(safeGet("dimention:sidebar") === "collapsed");
+$("#home").onclick = () => {
+  activeDim = null;
+  scope = "all";
+  query = "";
+  $("#search").value = "";
+  renderWorld();
+  scene?.fit(true);
+};
+$("#search").oninput = (e) => {
+  query = e.target.value;
+  renderWorld();
+};
+$("#type-filter").onchange = (e) => {
+  filter = e.target.value;
+  renderWorld();
+};
+$("#move-axis").onchange = () => setMode(mode);
+$("#snap").onchange = () => setMode(mode);
+$("#fit").onclick = () => scene?.fit();
+$("#reset").onclick = () => scene?.fit(true);
+$("#new-document").onclick = () => createMenu();
+$("#connections").onclick = () => browseConnections();
+$("#trash").onclick = () =>
+  navigate(async () => {
+    trash = (await api("/trash")).nodes;
+    showTrash();
+  });
+$("#export").onclick = exportJSON;
+$("#import").onclick = () => $("#import-file").click();
+$("#help").onclick = () =>
+  modal(
+    `<div class="dialog-heading"><div><span class="eyebrow">WELCOME TO YOUR WORLD</span><h2>A house for your thoughts.</h2></div><button data-close-dialog aria-label="Close guide">×</button></div><dl class="guide"><dt>Create a Dim</dt><dd>A room for a topic, with a Desk for active work and Storage for reference. Dims and independent documents share the same 3D world.</dd><dt>Open and return</dt><dd>Click a document to expand it into a full reading page. Back to 3D or Escape returns it to its place. Use Save or Ctrl/Cmd+S to keep edits.</dd><dt>Move around</dt><dd>Drag empty space to orbit. Pan or right-drag to pan. Scroll to zoom. Use Fit all to find everything.</dd><dt>Arrange your world</dt><dd>Choose Select items or Shift-click cards to select several. Align them, snap to a 50-unit grid, or move them together. Moving a Dim carries its contents. Movement saves immediately and offers Undo.</dd><dt>Follow connections</dt><dd>Click a line label, open Connections in the sidebar, or follow the incoming and outgoing cards in an editor. Dims can connect to Dims or documents.</dd><dt>Keep your work safe</dt><dd>Deleted items go to Trash. Restore a Dim with its contents and connections. Export includes Trash; import previews and appends content without replacing your existing world.</dd></dl><button data-close-dialog class="primary">Make yourself at home</button>`,
+  );
+document.addEventListener("input", (e) => {
+  if (!draft || !["document-dim", "document-area"].includes(e.target.id))
+    return;
+  if (draft.dimId) {
+    Object.assign(draft, placement(draft.dimId, draft.area));
+    document.querySelectorAll("[data-coordinate]").forEach((input) => {
+      input.value = draft[input.dataset.coordinate];
+    });
+  }
+  $("#place-in-room").textContent =
+    `Place at ${draft.area === "desk" ? "Desk" : "Storage"} ↗`;
+  markDirty();
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    if (!$("#dialog").open) save();
+  }
+  if ($("#dialog").open) return;
+  if (e.key === "Escape") {
+    if (draft) {
+      e.preventDefault();
+      navigate(closeNow);
+    } else {
+      multi.clear();
+      renderWorld();
+    }
+  }
+  if (e.key === "/" && !e.target.matches("input,textarea,select")) {
+    e.preventDefault();
+    if (!draft) {
+      setCollapsed(false);
+      $("#search").focus();
+    }
+  }
+});
+window.addEventListener("beforeunload", (e) => {
+  if (dirty || saving) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
+function unavailable() {
+  const previous = scene;
+  scene = null;
+  try {
+    previous?.dispose();
+  } catch {}
+  notice(
+    "<h2>Your world is still here.</h2><p>WebGL is unavailable. Use the sidebar, Dims, and full-page editors. Enable browser hardware acceleration and reload to return to 3D.</p>",
+  );
+  document.querySelector(".view-toolbar").hidden = true;
+}
+async function load() {
+  try {
+    const [next, bin] = await Promise.all([api("/workspace"), api("/trash")]);
+    graph = next;
+    trash = bin.nodes;
+    loaded = true;
+    try {
+      scene = createWorkspaceScene($("#canvas-container"), {
+        onSelect: openNode,
+        onToggle: toggle,
+        onEdge: browseConnections,
+        canMove: () => !busy && !saving && !draft,
+        onMove: movePositions,
+        onUnavailable: unavailable,
+      });
+    } catch {
+      unavailable();
+    }
+    renderWorld();
+    scene?.fit(true);
+    const r = graph.nodes.find((n) => recovered(n));
+    if (r) await openNow(r.id);
+  } catch (e) {
+    notice(
+      `<h2>Couldn’t open your world.</h2><p>${esc(e.message)}</p><button id="retry" class="primary">Try again</button>`,
+    );
+    $("#retry").onclick = load;
+  }
+}
 load();
