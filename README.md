@@ -1,4 +1,4 @@
-# Dimention 0.3
+# Dimention 0.4
 
 A local world for notes, ideas, workflows, and tables arranged in real 3D space. A **Dim** is a room for a topic: a **Desk** for active work and **Storage** for reference. Multiple Dims and independent documents share the same world, and any of them can connect to one another.
 
@@ -24,7 +24,7 @@ npm run build
 npm test
 ```
 
-The 24 tests use disposable databases, never your workspace database. Build first because the HTTP tests check the built frontend too. Details are in [VERIFICATION.md](VERIFICATION.md).
+The 27 tests use disposable databases, never your workspace database. Build first because the HTTP tests check the built frontend too. Details are in [VERIFICATION.md](VERIFICATION.md).
 
 Optional settings, set before launching:
 
@@ -55,6 +55,16 @@ In a document's details, **Lives in** and **Desk or Storage** change its members
 - In **Connections**, search for a destination and optionally describe the relationship. Links save immediately. Follow the incoming or outgoing cards to navigate; **Previous** retraces the documents you followed.
 - The sidebar's **Connections** view searches all routes by item title or relationship. Both ends of each route are clickable. Clicking a 3D line or its label opens the same navigator. Arrowheads indicate direction. Dims can connect to Dims or documents.
 - Search finds titles, content, workflow steps, table columns, and table cells across rooms. Type filters narrow document results. Press **/** outside an editor to search.
+
+## The furnished room
+
+Dims are cutaway rooms with raised floors, low walls, rugs, wooden desks, chairs, desk lamps, and two-drawer cabinets. Directional and hemisphere lighting shade the geometry; soft contact shadows anchor the furniture.
+
+Click a cabinet or choose its Storage area to slide out the drawers. Stored document cards rise into view as the folders lift. **Close Storage**, clicking the same cabinet again, or leaving the area tucks them away. Opening a stored note from the sidebar opens its cabinet before expanding the full-page editor. Returning from the editor leaves that Storage open. Motion can reverse midway and stops completely when settled; reduced-motion settings skip the movement.
+
+**Move** and **Select items** expose stored cards for placement. Furniture follows its Dim. Document cards use a raised presentation above desks and cabinets; animation does not write to the database. Numeric coordinates remain the saved placement anchors, and dragging changes those anchors by the drag delta. The sidebar and global Connections navigator retain access to all documents and routes while cards are tucked away. Each cabinet previews up to 24 folder blocks; its organizer lists every document.
+
+**Room view** is the default perspective and Reset view returns to it. **Aligned 3D** and **Top** are still available.
 
 ## Arrange the world
 
@@ -104,6 +114,7 @@ Add one complete feature at a time: define its saved data and expected behavior,
 | `server/server.mjs`                       | Local HTTP server, API routing, request limits and origin checks.                       |
 | `src/main.js`                             | Navigation, editor state, draft recovery, dialogs and API actions.                      |
 | `src/scene.js`                            | Demand rendering, cached scene objects, camera and movement.                            |
+| `src/room-scene.js`, `src/motion.js`      | Furnished room geometry, drawer presentation, and reversible motion.                    |
 | `src/scene-art.js`                        | Card textures, labels and resource disposal.                                            |
 | `src/organizer.js`, `src/area-actions.js` | Named-area views and organization dialogs.                                              |
 | `shared/spatial.js`                       | Shared reserved-space rules and placement planning.                                     |
@@ -145,7 +156,7 @@ Limits: 64 active Dims; one to four areas of each type per Dim; 60-character are
 
 This is a single-user local app. Dims share one world and cannot nest inside other Dims. The renderer draws on demand, pauses during full-page editing and when hidden, caps pixel density at 1.5, reuses card textures and connection geometry, and disposes removed resources. Focused views omit unrelated objects and links.
 
-A desktop browser smoke test exercised 100 items with 99 connections. Repeated Dim zooms and a room drag did not grow texture or connection allocations; searching and editing left the render count unchanged. Performance varies by GPU, window size, and scene density. There is no guarantee of zero lag at arbitrary scale. See VERIFICATION.md for observed results and limits.
+Desktop browser checks use a disposable graph of 100 items with 99 connections. Room geometry is merged by finish, folder blocks are instanced, and drawer animation uses the same demand renderer. Repeated drawer cycles reuse their resources after the first reveal; searching leaves the 3D render count unchanged. Performance varies by GPU, window size, and scene density. There is no guarantee of zero lag at arbitrary scale. See VERIFICATION.md for observed results and limits.
 
 For a disposable performance workspace:
 

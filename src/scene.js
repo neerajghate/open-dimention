@@ -1,118 +1,21 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import {
-  card,
-  textSprite,
-  surfaceLabel,
-  dispose,
-  preview,
-} from "./scene-art.js";
+import { card, textSprite, dispose, preview } from "./scene-art.js";
 import { ROOM, zonesOf, zoneCenter, layoutProblem } from "../shared/spatial.js";
 export { palette, typeNames, preview } from "./scene-art.js";
+import { createRoom, FLOOR_Y } from "./room-scene.js";
 
+const roomDirection = () => new THREE.Vector3(0.9, 1, 1.4).normalize();
 const alignedDirection = () => new THREE.Vector3(0, 1, 1.35).normalize();
 const topDirection = () => new THREE.Vector3(0, 1, 0.0001).normalize();
-const FLOOR_Y = -110;
-
-function room(dim) {
-  const group = new THREE.Group(),
-    color = dim.payload.color;
-  const floorGeometry = new THREE.BoxGeometry(
-    ROOM.halfWidth * 2,
-    8,
-    ROOM.halfDepth * 2,
-  );
-  const floor = new THREE.Mesh(
-    floorGeometry,
-    new THREE.MeshBasicMaterial({ color: "#1d263c" }),
-  );
-  floor.position.y = FLOOR_Y;
-  group.add(floor);
-  const border = new THREE.LineSegments(
-    new THREE.EdgesGeometry(floorGeometry),
-    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.75 }),
-  );
-  border.position.y = FLOOR_Y;
-  group.add(border);
-  // A room-local 50-unit grid follows the same axes as every area and Snap.
-  const gridPoints = [];
-  for (let x = -ROOM.halfWidth; x <= ROOM.halfWidth; x += 50)
-    gridPoints.push(
-      x,
-      FLOOR_Y + 4.5,
-      -ROOM.halfDepth,
-      x,
-      FLOOR_Y + 4.5,
-      ROOM.halfDepth,
-    );
-  for (let z = -ROOM.halfDepth; z <= ROOM.halfDepth; z += 50)
-    gridPoints.push(
-      -ROOM.halfWidth,
-      FLOOR_Y + 4.5,
-      z,
-      ROOM.halfWidth,
-      FLOOR_Y + 4.5,
-      z,
-    );
-  group.add(
-    new THREE.LineSegments(
-      new THREE.BufferGeometry().setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(gridPoints, 3),
-      ),
-      new THREE.LineBasicMaterial({
-        color: "#56617c",
-        transparent: true,
-        opacity: 0.17,
-      }),
-    ),
-  );
-  // Continuous columns make the Desk/Storage alignment visible across the floor.
-  for (const [x, laneColor] of [
-    [-285, "#302f4c"],
-    [285, "#233c4d"],
-  ]) {
-    const lane = new THREE.Mesh(
-      new THREE.PlaneGeometry(525, 960),
-      new THREE.MeshBasicMaterial({ color: laneColor }),
-    );
-    lane.rotation.x = -Math.PI / 2;
-    lane.position.set(x, FLOOR_Y + 5, 0);
-    group.add(lane);
-  }
-  const hits = [];
-  for (const zone of zonesOf(dim)) {
-    const p = zoneCenter({ ...dim, x: 0, y: 0, z: 0 }, zone.id),
-      tile = new THREE.Mesh(
-        new THREE.BoxGeometry(525, 10, 204),
-        new THREE.MeshBasicMaterial({
-          color: zone.type === "desk" ? "#3b3864" : "#254d60",
-        }),
-      );
-    tile.position.set(p.x, -98, p.z);
-    tile.userData.zone = { dimId: dim.id, zoneId: zone.id };
-    group.add(tile);
-    hits.push(tile);
-    const label = surfaceLabel(
-      `${zone.type === "desk" ? "DESK" : "STORAGE"} / ${zone.name}`,
-      zone.type === "desk" ? "#d0c8ff" : "#a5d9e9",
-      430,
-    );
-    label.position.set(p.x, -92, p.z + 72);
-    label.userData.zone = tile.userData.zone;
-    group.add(label);
-    hits.push(label);
-  }
-  group.position.set(dim.x, dim.y, dim.z);
-  return { group, hits };
-}
-
 export function createWorkspaceScene(container, callbacks) {
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
     powerPreference: "default",
   });
-  renderer.setClearColor("#121724");
+  renderer.setClearColor("#182132");
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   const canvas = renderer.domElement;
   canvas.tabIndex = 0;
@@ -124,7 +27,22 @@ export function createWorkspaceScene(container, callbacks) {
   const world = new THREE.Scene(),
     camera = new THREE.PerspectiveCamera(43, 1, 1, 40000),
     controls = new OrbitControls(camera, canvas);
-  camera.position.copy(alignedDirection().multiplyScalar(2200));
+  camera.position.copy(roomDirection().multiplyScalar(2200));
+  world.add(new THREE.HemisphereLight("#d8e7ff", "#3b3545", 2.3));
+  const sunlight = new THREE.DirectionalLight("#fff0d8", 3.2);
+  sunlight.position.set(-1500, 2600, 1700);
+  world.add(sunlight);
+  const rimLight = new THREE.DirectionalLight("#7fa7e3", 1.6);
+  rimLight.position.set(1800, 800, -1600);
+  world.add(rimLight);
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(24000, 24000),
+    new THREE.MeshStandardMaterial({ color: "#242e41", roughness: 1 }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = FLOOR_Y - 36;
+  world.add(ground);
+  world.fog = new THREE.Fog("#182132", 14000, 31000);
   controls.enableDamping = false;
   controls.minDistance = 250;
   controls.maxDistance = 26000;
@@ -136,7 +54,7 @@ export function createWorkspaceScene(container, callbacks) {
     RIGHT: THREE.MOUSE.PAN,
   };
   const grid = new THREE.GridHelper(14000, 140, "#35425d", "#222d43");
-  grid.position.y = FLOOR_Y - 4;
+  grid.position.y = FLOOR_Y - 35;
   grid.material.transparent = true;
   grid.material.opacity = 0.42;
   world.add(grid);
@@ -162,8 +80,11 @@ export function createWorkspaceScene(container, callbacks) {
     renderCount = 0,
     textureBuilds = 0,
     edgeBuilds = 0,
-    viewStyle = "aligned",
-    preferredView = "aligned";
+    viewStyle = "room",
+    preferredView = "room";
+  let nodeById = new Map(),
+    documentSlots = new Map();
+  const revealWaiters = new Set();
   const isVisible = (n) =>
     !view.dimId ||
     n.id === view.dimId ||
@@ -193,6 +114,14 @@ export function createWorkspaceScene(container, callbacks) {
         tween = null;
       }
     }
+    let roomMoving = false;
+    for (const room of rooms.values())
+      roomMoving = room.advance(now, reduced()) || roomMoving;
+    if (roomMoving || [...rooms.values()].some((r) => r.storage.size))
+      updatePresentation();
+    for (const waiter of revealWaiters)
+      if ((rooms.get(waiter.dimId)?.progress(waiter.zoneId) ?? 1) >= 0.999)
+        waiter.done();
     if (linksDirty) {
       updateLinks();
       linksDirty = false;
@@ -208,8 +137,13 @@ export function createWorkspaceScene(container, callbacks) {
       canvas.dataset.textures = renderer.info.memory.textures;
       canvas.dataset.geometries = renderer.info.memory.geometries;
       canvas.dataset.drawCalls = renderer.info.render.calls;
+      canvas.dataset.storageProgress =
+        view.dimId && view.zoneId
+          ? (rooms.get(view.dimId)?.progress(view.zoneId) ?? 0).toFixed(3)
+          : "0.000";
+      canvas.dataset.storageAnimating = String(roomMoving);
     }
-    if (tween) schedule();
+    if (tween || roomMoving) schedule();
   }
   controls.addEventListener("change", () => {
     const direction = camera.position.clone().sub(controls.target).normalize();
@@ -218,7 +152,9 @@ export function createWorkspaceScene(container, callbacks) {
         ? "top"
         : direction.dot(alignedDirection()) > 0.9999
           ? "aligned"
-          : "free";
+          : direction.dot(roomDirection()) > 0.9999
+            ? "room"
+            : "free";
     if (next !== viewStyle) {
       viewStyle = next;
       callbacks.onViewChange?.(next);
@@ -349,6 +285,100 @@ export function createWorkspaceScene(container, callbacks) {
       link.label.position.y += 20;
     }
   }
+  function displayPosition(n, progress) {
+    if (n.type === "dim") return new THREE.Vector3(n.x, n.y + 260, n.z - 515);
+    if (!n.dimId) return new THREE.Vector3(n.x, n.y, n.z);
+    if (n.area !== "storage") return new THREE.Vector3(n.x, n.y + 115, n.z);
+    const dim = nodeById.get(n.dimId);
+    if (!dim) return new THREE.Vector3(n.x, n.y, n.z);
+    const p = zoneCenter(dim, n.zoneId),
+      index = documentSlots.get(n.id) || 0;
+    const closed = new THREE.Vector3(
+      p.x + ((index % 10) - 4.5) * 24,
+      dim.y + 5,
+      p.z + 35,
+    );
+    const open = new THREE.Vector3(
+      n.x,
+      Math.max(n.y + 210, dim.y + 235),
+      n.z + 60,
+    );
+    return closed.lerp(
+      open,
+      progress ?? rooms.get(n.dimId)?.progress(n.zoneId) ?? 1,
+    );
+  }
+  function updatePresentation() {
+    const movingIds = new Set(gesture?.affected.map((n) => n.id) || []);
+    for (const n of nodes) {
+      const sprite = sprites.get(n.id);
+      if (!sprite) continue;
+      const storage = n.dimId && n.area === "storage",
+        progress = storage ? (rooms.get(n.dimId)?.progress(n.zoneId) ?? 1) : 1;
+      const visible =
+        isVisible(n) &&
+        (!storage || progress > 0.01) &&
+        !(
+          n.type === "dim" &&
+          view.dimId &&
+          mode !== "move" &&
+          mode !== "multi"
+        );
+      if (sprite.visible !== visible) {
+        sprite.visible = visible;
+        linksDirty = true;
+      }
+      sprite.material.opacity = storage ? Math.min(1, progress * 1.4) : 1;
+      const scale = storage ? 0.35 + 0.65 * progress : 1;
+      sprite.scale.set(
+        (n.type === "dim" ? 360 : 240) * scale,
+        (n.type === "dim" ? 190 : 127) * scale,
+        1,
+      );
+      if (!movingIds.has(n.id)) {
+        const position = displayPosition(n, progress);
+        if (!sprite.position.equals(position)) {
+          sprite.position.copy(position);
+          linksDirty = true;
+        }
+      }
+    }
+  }
+  function openStorage() {
+    for (const [id, room] of rooms)
+      room.setOpen(
+        view.dimId === id ? view.zoneId : null,
+        room.group.visible && (mode === "move" || mode === "multi"),
+        reduced() || !room.group.visible,
+      );
+    updatePresentation();
+    schedule();
+  }
+  function revealDocument(id) {
+    const n = nodeById.get(id);
+    if (
+      !n?.dimId ||
+      n.area !== "storage" ||
+      document.hidden ||
+      reduced() ||
+      (rooms.get(n.dimId)?.progress(n.zoneId) ?? 1) >= 0.999
+    )
+      return Promise.resolve();
+    return new Promise((resolve) => {
+      const waiter = {
+        dimId: n.dimId,
+        zoneId: n.zoneId,
+        done() {
+          clearTimeout(timer);
+          revealWaiters.delete(waiter);
+          resolve();
+        },
+      };
+      const timer = setTimeout(() => waiter.done(), 750);
+      revealWaiters.add(waiter);
+      schedule();
+    });
+  }
   function update(nextNodes, nextEdges, nextSelected = [], nextView = {}) {
     const selectionKey = [...nextSelected].sort().join(","),
       viewKey = JSON.stringify(nextView);
@@ -364,6 +394,16 @@ export function createWorkspaceScene(container, callbacks) {
     lastSelection = selectionKey;
     lastView = viewKey;
     nodes = nextNodes;
+    nodeById = new Map(nodes.map((n) => [n.id, n]));
+    documentSlots = new Map();
+    const slotCounts = new Map();
+    for (const n of nodes)
+      if (n.dimId) {
+        const key = n.dimId + ":" + n.zoneId;
+        const count = slotCounts.get(key) || 0;
+        documentSlots.set(n.id, count);
+        slotCounts.set(key, count + 1);
+      }
     edges = nextEdges;
     selected = new Set(nextSelected);
     view = nextView;
@@ -420,17 +460,20 @@ export function createWorkspaceScene(container, callbacks) {
         n.z + (n.type === "dim" ? -515 : 0),
       );
       if (n.type === "dim") {
-        const roomKey = JSON.stringify(n.payload);
+        const members = nodes.filter((d) => d.dimId === n.id);
+        const roomKey =
+          JSON.stringify(n.payload) +
+          JSON.stringify(members.map((d) => [d.id, d.zoneId, d.type]));
         let r = rooms.get(n.id);
         if (!r || r.key !== roomKey) {
           if (r) {
             world.remove(r.group);
             dispose(r.group);
           }
-          r = { ...room(n), key: roomKey };
+          r = { ...createRoom(n, members), key: roomKey };
           rooms.set(n.id, r);
           world.add(r.group);
-          textureBuilds += zonesOf(n).length;
+          textureBuilds += zonesOf(n).length * 2 + 1;
         }
         r.group.position.set(n.x, n.y, n.z);
         r.group.visible = !view.dimId || view.dimId === n.id;
@@ -439,9 +482,11 @@ export function createWorkspaceScene(container, callbacks) {
     const focusedDim = nodes.find((n) => n.id === view.dimId);
     grid.position.set(
       focusedDim?.x || 0,
-      (focusedDim?.y || 0) + FLOOR_Y - 4,
+      (focusedDim?.y || 0) + FLOOR_Y - 35,
       focusedDim?.z || 0,
     );
+    ground.position.y = (focusedDim?.y || 0) + FLOOR_Y - 36;
+    openStorage();
     linksDirty = true;
     schedule();
   }
@@ -465,15 +510,17 @@ export function createWorkspaceScene(container, callbacks) {
     };
     schedule();
   }
-  function pointsFor(items) {
+  function pointsFor(items, reveal = false) {
     const points = [];
     for (const n of items) {
       const sprite = sprites.get(n.id);
-      if (sprite) points.push(sprite.position.clone());
+      if (sprite && (sprite.visible || reveal))
+        points.push(displayPosition(n, 1));
       if (n.type === "dim") {
         for (const x of [-ROOM.halfWidth, ROOM.halfWidth])
           for (const z of [-ROOM.halfDepth, ROOM.halfDepth])
-            points.push(new THREE.Vector3(n.x + x, n.y + FLOOR_Y, n.z + z));
+            for (const y of [FLOOR_Y - 34, 160])
+              points.push(new THREE.Vector3(n.x + x, n.y + y, n.z + z));
       }
     }
     return points;
@@ -496,7 +543,7 @@ export function createWorkspaceScene(container, callbacks) {
     // Leave the header, view buttons and bottom toolbar clear of the room.
     const tanY =
       Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) *
-        Math.max(0.35, 1 - (height < 400 ? 120 : 170) / height);
+      Math.max(0.35, 1 - (height < 400 ? 120 : 170) / height);
     const tanX =
       Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect * 0.88;
     let distance = 700;
@@ -515,11 +562,11 @@ export function createWorkspaceScene(container, callbacks) {
     );
   }
   function fit(reset = false) {
-    if (reset) preferredView = "aligned";
+    if (reset) preferredView = "room";
     framePoints(
       pointsFor(nodes.filter(isVisible)),
       reset
-        ? alignedDirection()
+        ? roomDirection()
         : camera.position.clone().sub(controls.target).normalize(),
       !reset,
     );
@@ -532,10 +579,12 @@ export function createWorkspaceScene(container, callbacks) {
       const p = zoneCenter(n, zoneId);
       points = pointsFor(
         nodes.filter((d) => d.dimId === id && d.zoneId === zoneId),
+        true,
       );
       for (const x of [-265, 265])
-        for (const z of [-105, 105])
-          points.push(new THREE.Vector3(p.x + x, p.y + FLOOR_Y, p.z + z));
+        for (const z of [-110, 210])
+          for (const y of [FLOOR_Y, 160])
+            points.push(new THREE.Vector3(p.x + x, p.y + y, p.z + z));
     } else
       points = pointsFor(
         nodes.filter(
@@ -544,7 +593,11 @@ export function createWorkspaceScene(container, callbacks) {
       );
     framePoints(
       points,
-      preferredView === "top" ? topDirection() : alignedDirection(),
+      preferredView === "top"
+        ? topDirection()
+        : preferredView === "aligned"
+          ? alignedDirection()
+          : roomDirection(),
       animate,
     );
   }
@@ -554,7 +607,11 @@ export function createWorkspaceScene(container, callbacks) {
     else
       framePoints(
         pointsFor(nodes.filter(isVisible)),
-        style === "top" ? topDirection() : alignedDirection(),
+        style === "top"
+          ? topDirection()
+          : style === "aligned"
+            ? alignedDirection()
+            : roomDirection(),
       );
   }
   function rect(id) {
@@ -697,13 +754,7 @@ export function createWorkspaceScene(container, callbacks) {
       if (problem) return;
       gesture.delta.copy(delta);
       for (const n of gesture.affected) {
-        sprites
-          .get(n.id)
-          ?.position.set(
-            n.x + delta.x,
-            n.y + delta.y + (n.type === "dim" ? 255 : 0),
-            n.z + delta.z + (n.type === "dim" ? -515 : 0),
-          );
+        sprites.get(n.id)?.position.copy(displayPosition(n).add(delta));
         rooms
           .get(n.id)
           ?.group.position.set(n.x + delta.x, n.y + delta.y, n.z + delta.z);
@@ -752,10 +803,12 @@ export function createWorkspaceScene(container, callbacks) {
     focus,
     rect,
     setView,
+    revealDocument,
     setMode(m, a = "screen", s = false) {
       mode = m;
       axis = a;
       snap = s;
+      openStorage();
       controls.mouseButtons.LEFT =
         m === "pan" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
       canvas.style.cursor =
@@ -769,6 +822,9 @@ export function createWorkspaceScene(container, callbacks) {
       if (paused === value) return;
       paused = value;
       if (paused) {
+        for (const room of rooms.values())
+          room.advance(performance.now(), true);
+        updatePresentation();
         cancelAnimationFrame(frame);
         frame = 0;
       } else schedule();
@@ -784,6 +840,7 @@ export function createWorkspaceScene(container, callbacks) {
       lastNodes = null;
     },
     dispose() {
+      for (const waiter of revealWaiters) waiter.done();
       observer.disconnect();
       document.removeEventListener("visibilitychange", visibility);
       controls.dispose();

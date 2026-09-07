@@ -40,7 +40,7 @@ const dot = (n) =>
   `<span class="type-icon" style="--item-color:${n.type === "dim" ? n.payload.color : palette[n.type]}">${icons[n.type]}</span>`;
 $("#app").innerHTML = `
 <aside id="sidebar" class="sidebar" aria-label="Workspace navigation">
-  <div class="brand-row"><button id="home" class="brand" aria-label="Show all of my world"><span class="brand-mark">D<span>·</span></span><span class="sidebar-label">dimention<span class="beta">03</span></span></button><button id="collapse" class="icon-button" aria-label="Collapse sidebar" title="Collapse sidebar">◧</button></div>
+  <div class="brand-row"><button id="home" class="brand" aria-label="Show all of my world"><span class="brand-mark">D<span>·</span></span><span class="sidebar-label">dimention<span class="beta">04</span></span></button><button id="collapse" class="icon-button" aria-label="Collapse sidebar" title="Collapse sidebar">◧</button></div>
   <div class="sidebar-main"><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find anything…" aria-label="Search everything"><kbd>/</kbd></label>
   <nav class="main-nav"><button data-scope="all" class="nav-item active" title="All of my world"><span>⌘</span><span class="sidebar-label">My world</span><small id="world-count"></small></button><button data-scope="loose" class="nav-item" title="Independent documents"><span>▤</span><span class="sidebar-label">Independent docs</span><small id="loose-count"></small></button><button id="connections" class="nav-item" title="Browse all connections"><span>⇄</span><span class="sidebar-label">Connections</span><small id="edge-count"></small></button></nav>
   <div class="section-caption"><span class="sidebar-label">QUICK ACCESS</span><button data-new-dim aria-label="Create a Dim" title="Create a Dim">＋</button></div><div id="dim-list"></div>
@@ -52,7 +52,7 @@ $("#app").innerHTML = `
   <section class="stage" aria-label="3D world"><div id="canvas-container"></div><div class="world-heading"><span class="eyebrow">THINK IN A NEW DIMENSION</span><h1>Make room for your ideas<span>.</span></h1><p>Rooms for your topics. Space for what’s next.</p></div>
   <div id="world-notice" class="world-notice" hidden></div><div id="dim-focus" class="dim-focus" hidden></div>
   <div id="selection-bar" class="selection-bar" hidden></div>
-  <div class="view-presets" aria-label="Camera alignment"><button data-view="aligned" aria-pressed="true" title="Center the camera on the room axes">Aligned 3D</button><button data-view="top" aria-pressed="false" title="Look straight down at the X/Z plane">Top</button></div>
+  <div class="view-presets" aria-label="Camera alignment"><button data-view="room" aria-pressed="true" title="Explore a furnished 3D room">Room view</button><button data-view="aligned" aria-pressed="false" title="Center the camera on the room axes">Aligned 3D</button><button data-view="top" aria-pressed="false" title="Look straight down at the X/Z plane">Top</button></div>
   <div class="view-toolbar" aria-label="View and placement controls">${[
     ["select", "↖", "Explore"],
     ["multi", "▧", "Select items"],
@@ -482,6 +482,11 @@ async function openNow(id, { follow = false } = {}) {
   scope = activeDim ? "dim" : "all";
   if (follow && draft) trail.push(draft.id);
   else if (!wasOpen) trail = [];
+  if (!wasOpen && n.dimId && n.area === "storage") {
+    renderWorld();
+    scene?.focus(n.dimId, n.zoneId);
+    await scene?.revealDocument(n.id);
+  }
   const recoveredDraft = recovered(n);
   draft = recoveredDraft || clone(n);
   dirty = !!recoveredDraft;
@@ -1133,7 +1138,7 @@ $("#export").onclick = exportJSON;
 $("#import").onclick = () => $("#import-file").click();
 $("#help").onclick = () =>
   modal(
-    `<div class="dialog-heading"><div><span class="eyebrow">WELCOME TO YOUR WORLD</span><h2>A house for your thoughts.</h2></div><button data-close-dialog aria-label="Close guide">×</button></div><dl class="guide"><dt>Create a Dim</dt><dd>A room for a topic. Click its name in Quick access to zoom in. Create named Desks for active work and Storage for reference using the organizer on the right.</dd><dt>Open and return</dt><dd>Click a document to expand it into a full reading page. Back to 3D or Escape returns it to its place. Use Save or Ctrl/Cmd+S to keep edits.</dd><dt>Move around</dt><dd>Drag empty space to orbit. Pan or right-drag to pan. Scroll to zoom. Use Fit all to find everything. Aligned 3D straightens the camera to the room axes; Top looks directly down at the floor. The room grid follows 50-unit Snap spacing.</dd><dt>Organize your Dim</dt><dd>Pick an area, then use New document or Bring existing. Move documents between named areas using their arrow button. Renaming an area keeps its contents; removing one moves its contents to another area you choose.</dd><dt>Reserved space</dt><dd>Independent documents stay outside every Dim. Assign a document to a Desk or Storage to bring it inside. Moving a Dim carries its contents and stops before another room or outside document.</dd><dt>Arrange your world</dt><dd>Choose Select items or Shift-click cards to select several. Align them, snap to a 50-unit grid, or move them together. Moving a Dim carries its contents. Movement saves immediately and offers Undo.</dd><dt>Follow connections</dt><dd>Click a line label, open Connections in the sidebar, or follow the incoming and outgoing cards in an editor. Dims can connect to Dims or documents.</dd><dt>Keep your work safe</dt><dd>Deleted items go to Trash. Restore a Dim with its contents and connections. Export includes Trash; import previews and appends content without replacing your existing world.</dd></dl><button data-close-dialog class="primary">Make yourself at home</button>`,
+    `<div class="dialog-heading"><div><span class="eyebrow">WELCOME TO YOUR WORLD</span><h2>A house for your thoughts.</h2></div><button data-close-dialog aria-label="Close guide">×</button></div><dl class="guide"><dt>Create a Dim</dt><dd>A room for a topic. Click its name in Quick access to zoom in. Create named Desks for active work and Storage for reference using the organizer on the right.</dd><dt>Open and return</dt><dd>Click a document to expand it into a full reading page. Back to 3D or Escape returns it to its place. Use Save or Ctrl/Cmd+S to keep edits.</dd><dt>Move around</dt><dd>Drag empty space to orbit. Pan or right-drag to pan. Scroll to zoom. Use Room view to explore the furnished space, and Fit all to find everything. Aligned 3D straightens the camera to the room axes; Top looks directly down at the floor. The room grid follows 50-unit Snap spacing.</dd><dt>Organize your Dim</dt><dd>Pick an area, then use New document or Bring existing. Move documents between named areas using their arrow button. Renaming an area keeps its contents; removing one moves its contents to another area you choose.</dd><dt>Open Storage</dt><dd>Click a cabinet or its Storage area to slide the drawers open and reveal documents. Close Storage tucks them away. Move and Select items expose stored cards for placement. Opening a stored note from the sidebar opens its cabinet first. System reduced-motion preferences are respected.</dd><dt>Reserved space</dt><dd>Independent documents stay outside every Dim. Assign a document to a Desk or Storage to bring it inside. Moving a Dim carries its contents and stops before another room or outside document.</dd><dt>Arrange your world</dt><dd>Choose Select items or Shift-click cards to select several. Align them, snap to a 50-unit grid, or move them together. Moving a Dim carries its contents. Movement saves immediately and offers Undo.</dd><dt>Follow connections</dt><dd>Click a line label, open Connections in the sidebar, or follow the incoming and outgoing cards in an editor. Dims can connect to Dims or documents.</dd><dt>Keep your work safe</dt><dd>Deleted items go to Trash. Restore a Dim with its contents and connections. Export includes Trash; import previews and appends content without replacing your existing world.</dd></dl><button data-close-dialog class="primary">Make yourself at home</button>`,
   );
 document.addEventListener("input", (e) => {
   if (!draft || !["document-dim", "document-zone"].includes(e.target.id))
@@ -1260,7 +1265,15 @@ async function load() {
       scene = createWorkspaceScene($("#canvas-container"), {
         onSelect: (id) =>
           get(id)?.type === "dim" ? focusDim(id) : openNode(id),
-        onZone: ({ dimId, zoneId }) => focusDim(dimId, zoneId),
+        onZone: ({ dimId, zoneId }) =>
+          focusDim(
+            dimId,
+            activeDim === dimId &&
+              activeZone === zoneId &&
+              zoneOf(get(dimId), zoneId)?.type === "storage"
+              ? null
+              : zoneId,
+          ),
         onBlocked: (message) => toast(message, true),
         onToggle: toggle,
         onEdge: browseConnections,

@@ -131,6 +131,8 @@ export function surfaceLabel(text, color, width = 430) {
 }
 export function dispose(obj) {
   obj.traverse((o) => {
+    // Instanced folder meshes own GPU buffers beyond their geometry.
+    if (o.isInstancedMesh) o.dispose();
     // Three.js sprites share one geometry; disposing it churns buffers used by
     // every surviving card and label. Mesh and line geometries are owned here.
     if (!o.isSprite) o.geometry?.dispose();
