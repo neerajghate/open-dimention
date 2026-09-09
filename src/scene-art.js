@@ -82,7 +82,9 @@ export function card(n, selected, count) {
     lines(
       ctx,
       dim
-        ? `${count} documents · Desk & Storage`
+        ? n.payload.nextAction ||
+            n.payload.goal ||
+            `${count} documents · Desk & Storage`
         : preview(n).slice(0, 360) || "Room for a new thought.",
       630,
       2,
@@ -93,7 +95,7 @@ export function card(n, selected, count) {
     ctx.font = "22px Segoe UI";
     ctx.fillText(
       dim
-        ? "Zoom to Dim  ↗"
+        ? `${count} documents · Enter Dim ↗`
         : n.dimId
           ? `${n.area === "desk" ? "DESK" : "STORAGE"} · Click to open`
           : "INDEPENDENT · Click to open",

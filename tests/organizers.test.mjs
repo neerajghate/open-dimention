@@ -190,7 +190,7 @@ test("version 3 import keeps named areas and repairs incoming overlap without sh
   const n = doc(source, { dimId: r.id, zoneId: z.id, autoPlace: true });
   source.createEdge({ source: r.id, target: n.id });
   const data = source.export();
-  assert.equal(data.version, 3);
+  assert.equal(data.version, 4);
   const preview = s.importWorkspace(data, true);
   assert.equal(preview.items, 2);
   assert.equal(s.graph().nodes.length, 2);

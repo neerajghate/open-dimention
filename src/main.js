@@ -1,5 +1,14 @@
 import "./style.css";
 import "./organizer.css";
+import "./workspace.css";
+import {
+  renderWorkspace,
+  searchText,
+  entriesFor,
+  spatialPresentation,
+} from "./workspace.js";
+import { workspaceActions } from "./workspace-actions.js";
+import { markdown } from "./markdown.js";
 import { createWorkspaceScene, palette, typeNames, preview } from "./scene.js";
 import { renderPayload } from "./structured.js";
 import { $, escape as esc, icons, safeGet, safeSet } from "./ui.js";
@@ -12,7 +21,7 @@ import {
 import { dimDock, dimOverview, areaName, areaOptions } from "./organizer.js";
 import { areaActions } from "./area-actions.js";
 
-let graph = { nodes: [], edges: [] },
+let graph = { nodes: [], edges: [], references: [], contexts: [] },
   trash = [],
   scene,
   loaded = false,
@@ -31,6 +40,18 @@ let graph = { nodes: [], edges: [] },
   multi = new Set(),
   trail = [],
   toastTimer;
+let workspaceView = "room",
+  workspaceLimit = 60,
+  showAllLinks = false,
+  workspaceOptions = { query: "", type: "all", tag: "", sort: "updated" },
+  editorHome = null,
+  editorReading = safeGet("dimention:focus") === "1",
+  notePreview = safeGet("dimention:preview") === "1",
+  readingTimer;
+const contextQueues = new Map();
+let lastSpatialNodes,
+  lastSpatialReferences,
+  spatialNodes = [];
 const clone = structuredClone,
   documents = () => graph.nodes.filter((n) => n.type !== "dim"),
   dims = () => graph.nodes.filter((n) => n.type === "dim"),
@@ -40,19 +61,19 @@ const dot = (n) =>
   `<span class="type-icon" style="--item-color:${n.type === "dim" ? n.payload.color : palette[n.type]}">${icons[n.type]}</span>`;
 $("#app").innerHTML = `
 <aside id="sidebar" class="sidebar" aria-label="Workspace navigation">
-  <div class="brand-row"><button id="home" class="brand" aria-label="Show all of my world"><span class="brand-mark">D<span>·</span></span><span class="sidebar-label">dimention<span class="beta">04</span></span></button><button id="collapse" class="icon-button" aria-label="Collapse sidebar" title="Collapse sidebar">◧</button></div>
+  <div class="brand-row"><button id="home" class="brand" aria-label="Show all of my world"><span class="brand-mark">D<span>·</span></span><span class="sidebar-label">dimention<span class="beta">05</span></span></button><button id="collapse" class="icon-button" aria-label="Collapse sidebar" title="Collapse sidebar">◧</button></div>
   <div class="sidebar-main"><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find anything…" aria-label="Search everything"><kbd>/</kbd></label>
-  <nav class="main-nav"><button data-scope="all" class="nav-item active" title="All of my world"><span>⌘</span><span class="sidebar-label">My world</span><small id="world-count"></small></button><button data-scope="loose" class="nav-item" title="Independent documents"><span>▤</span><span class="sidebar-label">Independent docs</span><small id="loose-count"></small></button><button id="connections" class="nav-item" title="Browse all connections"><span>⇄</span><span class="sidebar-label">Connections</span><small id="edge-count"></small></button></nav>
-  <div class="section-caption"><span class="sidebar-label">QUICK ACCESS</span><button data-new-dim aria-label="Create a Dim" title="Create a Dim">＋</button></div><div id="dim-list"></div>
+  <button class="primary quick-capture" data-quick-capture title="Quick capture · Ctrl+Shift+N"><span>＋</span><span class="sidebar-label">Quick capture</span><kbd>N</kbd></button><nav class="main-nav"><button data-scope="inbox" class="nav-item" title="Inbox"><span>⌑</span><span class="sidebar-label">Inbox</span><small id="inbox-count"></small></button><button data-scope="starred" class="nav-item" title="Favorites"><span>☆</span><span class="sidebar-label">Favorites</span></button><button data-scope="all" class="nav-item active" title="All of my world"><span>⌘</span><span class="sidebar-label">My world</span><small id="world-count"></small></button><button data-scope="loose" class="nav-item" title="Independent documents"><span>▤</span><span class="sidebar-label">Independent docs</span><small id="loose-count"></small></button><button id="connections" class="nav-item" title="Browse all connections"><span>⇄</span><span class="sidebar-label">Connections</span><small id="edge-count"></small></button></nav>
+  <div class="section-caption"><span class="sidebar-label">QUICK ACCESS</span><button data-new-dim aria-label="Create a Dim" title="Create a Dim">＋ Dim</button></div><div id="dim-list"></div>
   <div class="section-caption sidebar-label"><span id="list-heading">DOCUMENTS</span><select id="type-filter" aria-label="Filter documents"><option value="all">All types</option>${["note", "idea", "workflow", "table"].map((t) => `<option value="${t}">${typeNames[t]}s</option>`).join("")}</select></div>
   <div id="node-list" class="node-list"></div></div>
   <div class="sidebar-bottom"><button class="primary new-dim" data-new-dim title="New Dim"><span>＋</span><span class="sidebar-label">New Dim</span></button><button id="new-document" aria-label="New document" class="secondary" title="New document"><span>＋</span><span class="sidebar-label">New document</span></button><div class="utilities"><button id="trash" title="Trash" aria-label="Open Trash">♧ <span class="sidebar-label">Trash</span><small id="trash-count">0</small></button><button id="import" aria-label="Import JSON" title="Import JSON">↓</button><button id="export" aria-label="Export JSON" title="Export JSON">↑</button></div><div class="local-status sidebar-label"><span></span> Yours. On this computer.</div></div>
 </aside>
-<main id="world" class="world"><header class="world-topbar"><div class="breadcrumb"><span class="world-dot"></span><span id="world-title">My world</span><span class="slash">/</span><span class="muted">Your spatial workspace</span></div><div class="top-actions"><button id="help" class="dark-quiet">? Guide</button><button class="dark-primary" data-new-dim>＋ New Dim</button></div></header>
-  <section class="stage" aria-label="3D world"><div id="canvas-container"></div><div class="world-heading"><span class="eyebrow">THINK IN A NEW DIMENSION</span><h1>Make room for your ideas<span>.</span></h1><p>Rooms for your topics. Space for what’s next.</p></div>
+<main id="world" class="world"><header class="world-topbar"><div class="breadcrumb"><span class="world-dot"></span><span id="world-title">My world</span><span class="slash">/</span><span class="muted">Your spatial workspace</span></div><div class="top-actions"><div class="workspace-view-switch" aria-label="Workspace view"><button data-workspace-view="room" aria-pressed="true">3D Space</button><button data-workspace-view="board" aria-pressed="false">Board</button><button data-workspace-view="list" aria-pressed="false">List</button></div><button id="help" class="dark-quiet">? Guide</button><button class="dark-primary" data-new-dim>＋ New Dim</button></div></header>
+  <section class="stage" aria-label="3D world"><div id="canvas-container"></div><section id="workspace-surface" class="workspace-surface" aria-label="Document workspace" hidden></section><div class="world-heading"><span class="eyebrow">THINK IN A NEW DIMENSION</span><h1>A place for every project<span>.</span></h1><p>Enter a Dim to pick up where you left off.</p></div>
   <div id="world-notice" class="world-notice" hidden></div><div id="dim-focus" class="dim-focus" hidden></div>
   <div id="selection-bar" class="selection-bar" hidden></div>
-  <div class="view-presets" aria-label="Camera alignment"><button data-view="room" aria-pressed="true" title="Explore a furnished 3D room">Room view</button><button data-view="aligned" aria-pressed="false" title="Center the camera on the room axes">Aligned 3D</button><button data-view="top" aria-pressed="false" title="Look straight down at the X/Z plane">Top</button></div>
+  <div class="view-presets" aria-label="Camera alignment"><label class="camera-lock"><input id="camera-lock" type="checkbox" checked>Lock angle</label><label class="camera-lock"><input id="show-all-links" type="checkbox">All connections</label><button data-view="room" aria-pressed="true" title="View the 3D Dim platforms">Perspective</button><button data-view="aligned" aria-pressed="false" title="Center the camera on the room axes">Aligned 3D</button><button data-view="top" aria-pressed="false" title="Look straight down at the X/Z plane">Top</button></div>
   <div class="view-toolbar" aria-label="View and placement controls">${[
     ["select", "↖", "Explore"],
     ["multi", "▧", "Select items"],
@@ -66,7 +87,7 @@ $("#app").innerHTML = `
     .join(
       "",
     )}<span class="tool-divider"></span><select id="move-axis" aria-label="Movement axis"><option value="screen">View plane</option><option value="x">X axis</option><option value="y">Y axis</option><option value="z">Z · depth</option></select><label class="snap-control"><input id="snap" type="checkbox">Snap</label><span class="tool-divider"></span><button id="fit" aria-label="Fit all" title="Fit everything">⛶<span>Fit all</span></button><button id="reset" aria-label="Reset view">↺</button></div>
-  <footer class="world-footer"><span id="world-stats">Opening your world…</span><span id="controls-hint">Drag empty space to orbit · Scroll to zoom · Shift-click to select</span></footer></section>
+  <footer class="world-footer"><span id="world-stats">Opening your world…</span><span id="controls-hint">Drag to pan · Unlock angle to orbit · Scroll to zoom</span></footer></section>
 </main>
 <section id="editor" class="editor" role="dialog" aria-modal="true" aria-label="Full-page editor" hidden></section>
 <dialog id="dialog"><div id="dialog-content"></div></dialog><div id="toast" class="toast" role="status" hidden></div><input id="import-file" type="file" accept=".json,application/json" hidden>`;
@@ -201,6 +222,8 @@ function renderWorld() {
     counts = new Map();
   for (const n of allDocs)
     if (n.dimId) counts.set(n.dimId, (counts.get(n.dimId) || 0) + 1);
+  for (const r of graph.references || [])
+    counts.set(r.dimId, (counts.get(r.dimId) || 0) + 1);
   if (activeDim && !get(activeDim)) {
     activeDim = null;
     activeZone = null;
@@ -212,7 +235,10 @@ function renderWorld() {
   )
     activeZone = null;
   $("#world-count").textContent = graph.nodes.length;
-  $("#loose-count").textContent = allDocs.filter((n) => !n.dimId).length;
+  $("#loose-count").textContent = allDocs.filter(
+    (n) => !n.dimId && !n.inbox,
+  ).length;
+  $("#inbox-count").textContent = allDocs.filter((n) => n.inbox).length;
   $("#edge-count").textContent = graph.edges.length;
   $("#trash-count").textContent = trash.length;
   $("#dim-list").innerHTML = allDims.length
@@ -226,13 +252,26 @@ function renderWorld() {
   const lower = query.toLowerCase(),
     list = allDocs.filter(
       (n) =>
-        (query || scope !== "loose" || !n.dimId) &&
-        (query || !activeDim || n.dimId === activeDim) &&
-        (query || !activeZone || n.zoneId === activeZone) &&
+        (query || scope !== "loose" || (!n.dimId && !n.inbox)) &&
+        (query || scope !== "inbox" || n.inbox) &&
+        (query || scope !== "starred" || n.starred) &&
+        (query ||
+          !activeDim ||
+          n.dimId === activeDim ||
+          (graph.references || []).some(
+            (r) => r.dimId === activeDim && r.nodeId === n.id,
+          )) &&
+        (query ||
+          !activeZone ||
+          (n.dimId === activeDim && n.zoneId === activeZone) ||
+          (graph.references || []).some(
+            (r) =>
+              r.dimId === activeDim &&
+              r.nodeId === n.id &&
+              r.zoneId === activeZone,
+          )) &&
         (filter === "all" || n.type === filter) &&
-        `${n.title} ${n.content} ${preview(n)} ${n.type === "table" ? n.payload.rows.flat().join(" ") : ""}`
-          .toLowerCase()
-          .includes(lower),
+        searchText(n).includes(lower),
     );
   $("#list-heading").textContent = query
     ? "SEARCH RESULTS"
@@ -263,9 +302,8 @@ function renderWorld() {
   $("#world-stats").textContent = activeDim
     ? (activeZone ? areaName(get(activeDim), activeZone) : "All areas") +
       " / " +
-      allDocs.filter(
-        (n) =>
-          n.dimId === activeDim && (!activeZone || n.zoneId === activeZone),
+      entriesFor(graph, activeDim).filter(
+        (e) => !activeZone || e.zoneId === activeZone,
       ).length +
       " documents"
     : `${allDims.length} Dims / ${allDocs.length} documents / ${graph.edges.length} connections`;
@@ -275,22 +313,214 @@ function renderWorld() {
       get(activeDim),
       graph.nodes,
       activeZone,
+      graph.references || [],
+      (graph.contexts || []).find((c) => c.dimId === activeDim),
     );
   if (loaded && !graph.nodes.length && scene)
     notice(
       '<h2>Build a world around your ideas.</h2><p>Create a Dim with Desks and Storage, or start with an independent document.</p><button class="primary" data-new-dim>＋ Create a Dim</button><button class="secondary" data-create="note">New independent note</button>',
     );
   else if (scene) $("#world-notice").hidden = true;
-  scene?.setPaused(!!draft);
-  scene?.update(graph.nodes, graph.edges, [...multi], {
+  renderKnowledge();
+  scene?.setPaused(!!draft || workspaceView !== "room");
+  if (
+    lastSpatialNodes !== graph.nodes ||
+    lastSpatialReferences !== graph.references
+  ) {
+    spatialNodes = spatialPresentation(graph);
+    lastSpatialNodes = graph.nodes;
+    lastSpatialReferences = graph.references;
+  }
+  scene?.update(spatialNodes, graph.edges, [...multi], {
     dimId: activeDim,
     zoneId: activeZone,
+    showAllLinks,
+    scope,
   });
   renderSelection();
 }
 function notice(html) {
   $("#world-notice").innerHTML = html;
   $("#world-notice").hidden = false;
+}
+function renderKnowledge() {
+  $("#world").classList.toggle("knowledge-view", workspaceView !== "room");
+  $("#workspace-surface").hidden = workspaceView === "room";
+  document
+    .querySelectorAll("[data-workspace-view]")
+    .forEach((b) =>
+      b.setAttribute(
+        "aria-pressed",
+        String(b.dataset.workspaceView === workspaceView),
+      ),
+    );
+  if (workspaceView === "room") return;
+  const surface = $("#workspace-surface"),
+    scroll = surface.scrollTop;
+  surface.innerHTML = renderWorkspace({
+    graph,
+    dimId: activeDim,
+    zoneId: activeZone,
+    view: workspaceView,
+    scope,
+    options: workspaceOptions,
+    multi,
+    limit: workspaceLimit,
+  });
+  surface.scrollTop = scroll;
+  $("#world-title").textContent = activeDim
+    ? get(activeDim).title
+    : { inbox: "Inbox", starred: "Favorites", loose: "Independent documents" }[
+        scope
+      ] || "My world";
+  $("#workspace-search").oninput = (e) => {
+    const start = e.target.selectionStart;
+    workspaceOptions.query = e.target.value;
+    workspaceLimit = 60;
+    renderKnowledge();
+    $("#workspace-search").focus();
+    try {
+      $("#workspace-search").setSelectionRange(start, start);
+    } catch {}
+  };
+  for (const [id, key] of [
+    ["workspace-type", "type"],
+    ["workspace-tag", "tag"],
+    ["workspace-sort", "sort"],
+  ])
+    $("#" + id).onchange = (e) => {
+      workspaceOptions[key] = e.target.value;
+      workspaceLimit = 60;
+      renderKnowledge();
+    };
+}
+function rememberContext(dimId, change) {
+  if (!dimId || !get(dimId)) return Promise.resolve();
+  const previous = (graph.contexts || []).find((c) => c.dimId === dimId);
+  const context = {
+    dimId,
+    nodeId: null,
+    zoneId: null,
+    view: "board",
+    scroll: 0,
+    ...previous,
+    ...change,
+  };
+  if (
+    context.nodeId &&
+    !entriesFor(graph, dimId).some((e) => e.node.id === context.nodeId)
+  )
+    context.nodeId = null;
+  graph.contexts = [
+    ...(graph.contexts || []).filter((c) => c.dimId !== dimId),
+    context,
+  ];
+  const queued = (contextQueues.get(dimId) || Promise.resolve())
+    .then(() =>
+      api("/dims/" + dimId + "/context", { method: "PATCH", body: context }),
+    )
+    .catch((e) =>
+      toast("Working context could not be saved. " + e.message, true),
+    );
+  contextQueues.set(dimId, queued);
+  queued.finally(() => {
+    if (contextQueues.get(dimId) === queued) contextQueues.delete(dimId);
+  });
+  return queued;
+}
+function rememberReading() {
+  if (!draft || draft.type === "dim" || !activeDim) return Promise.resolve();
+  return rememberContext(activeDim, {
+    nodeId: draft.id,
+    zoneId: activeZone,
+    view: workspaceView,
+    scroll: $("#editor-form").scrollTop,
+  });
+}
+function updateWordCount() {
+  if (!draft || !$("#note-word-count")) return;
+  const words = draft.content.trim().split(/\s+/).filter(Boolean).length;
+  $("#note-word-count").textContent =
+    words + " words · " + draft.content.length.toLocaleString() + " characters";
+}
+function updateReadingView() {
+  $("#editor").classList.toggle("reading-mode", editorReading);
+  $("#reading-mode")?.setAttribute("aria-pressed", String(editorReading));
+  if ($("#reading-mode"))
+    $("#reading-mode").textContent = editorReading ? "Show details" : "Focus";
+  const enabled = notePreview && ["note", "idea"].includes(draft?.type);
+  $("#node-content").hidden = enabled;
+  $("#markdown-preview").hidden = !enabled;
+  if (enabled) $("#markdown-preview").innerHTML = markdown(draft.content);
+  if ($("#note-preview-toggle")) {
+    $("#note-preview-toggle").textContent = enabled ? "Write" : "Read preview";
+    $("#note-preview-toggle").setAttribute("aria-pressed", String(enabled));
+  }
+  updateWordCount();
+}
+function formatNote(kind) {
+  if (!draft) return;
+  notePreview = false;
+  updateReadingView();
+  const input = $("#node-content"),
+    a = input.selectionStart,
+    b = input.selectionEnd,
+    selected = input.value.slice(a, b);
+  const text =
+    kind === "bold"
+      ? `**${selected || "bold text"}**`
+      : kind === "heading"
+        ? `\n## ${selected || "Heading"}\n`
+        : kind === "bullet"
+          ? `\n- ${selected || "List item"}\n`
+          : `[${selected || "Link title"}](https://example.com)`;
+  input.setRangeText(text, a, b, "select");
+  draft.content = input.value;
+  markDirty();
+  updateWordCount();
+  input.focus();
+}
+function commandSearch() {
+  navigate(() => {
+    modal(
+      '<div class="dialog-heading"><h2>Jump to anything</h2><button data-close-dialog aria-label="Close search">×</button></div><input id="command-search" type="search" placeholder="Search documents, Dims, content, or tags…" aria-label="Search all content"><div id="command-results" class="trash-list"></div>',
+    );
+    const render = () => {
+      $("#command-results").innerHTML =
+        graph.nodes
+          .filter((n) =>
+            searchText(n).includes($("#command-search").value.toLowerCase()),
+          )
+          .slice(0, 50)
+          .map(
+            (n) =>
+              `<button class="command-result" data-command-open="${n.id}">${dot(n)}<span><strong>${esc(n.title)}</strong><small>${n.type === "dim" ? "Dim" : n.inbox ? "Inbox" : get(n.dimId)?.title || "Independent"}</small><span>↗</span></span></button>`,
+          )
+          .join("") || '<p class="nav-empty">No results.</p>';
+    };
+    $("#command-search").oninput = render;
+    $("#command-search").onkeydown = (e) => {
+      if (e.key === "Enter") $("#command-results button")?.click();
+    };
+    render();
+    $("#command-search").focus();
+  });
+}
+function showRelated(id) {
+  const n = get(id),
+    links = graph.edges.filter((e) => e.source === id || e.target === id);
+  modal(
+    `<div class="dialog-heading"><h2>Connected to ${esc(n.title)}</h2><button data-close-dialog aria-label="Close connections">×</button></div><p>Follow a relationship to its document or Dim.</p><div class="trash-list">${
+      links
+        .map((e) => {
+          const outgoing = e.source === id,
+            other = get(outgoing ? e.target : e.source);
+          return `<button class="command-result" data-command-open="${other.id}">${dot(other)}<span><small>${outgoing ? "OUTGOING →" : "INCOMING ←"} ${esc(e.label || "Connected")}</small><strong>${esc(other.title)}</strong></span></button>`;
+        })
+        .join("") ||
+      '<p class="nav-empty">No connections yet. Open this document to add one.</p>'
+    }</div><button class="secondary" data-command-open="${id}">Open document & manage connections</button>`,
+  );
 }
 function setCollapsed(value) {
   $("#sidebar").classList.toggle("collapsed", value);
@@ -315,7 +545,7 @@ function setMode(next) {
         ? "Drag a card or a selection · Movement saves automatically · Snap uses 50 units"
         : mode === "pan"
           ? "Drag to pan · Scroll to zoom"
-          : "Drag empty space to orbit · Scroll to zoom · Shift-click to select";
+          : "Drag to pan · Unlock angle to orbit · Scroll to zoom";
 }
 function toggle(id) {
   multi.has(id) ? multi.delete(id) : multi.add(id);
@@ -440,6 +670,20 @@ async function navigate(action) {
 async function editorTransition(open, id) {
   const el = $("#editor");
   if (reduced()) return;
+  if (workspaceView !== "room") {
+    await el
+      .animate(
+        open
+          ? [
+              { opacity: 0, transform: "translateY(10px)" },
+              { opacity: 1, transform: "none" },
+            ]
+          : [{ opacity: 1 }, { opacity: 0 }],
+        { duration: 140 },
+      )
+      .finished.catch(() => {});
+    return;
+  }
   const r = scene?.rect(id) || {
     x: innerWidth / 2 - 100,
     y: innerHeight / 2 - 60,
@@ -472,21 +716,50 @@ async function openNow(id, { follow = false } = {}) {
   const n = get(id);
   if (!n) return;
   const wasOpen = !!draft;
+  if (wasOpen) await rememberReading();
+  const reference = (graph.references || []).find(
+    (r) => r.dimId === activeDim && r.nodeId === n.id,
+  );
+  const origin = {
+    dimId: activeDim,
+    zoneId: activeZone,
+    scope,
+    view: workspaceView,
+  };
   if (
     activeDim !== (n.type === "dim" ? n.id : n.dimId) ||
     activeZone !== (n.type === "dim" ? null : n.zoneId)
   )
     focusAfterEdit = true;
-  activeDim = n.type === "dim" ? n.id : n.dimId;
-  activeZone = n.type === "dim" ? null : n.zoneId;
-  scope = activeDim ? "dim" : "all";
+  activeDim = reference ? reference.dimId : n.type === "dim" ? n.id : n.dimId;
+  activeZone = reference
+    ? reference.zoneId
+    : n.type === "dim"
+      ? null
+      : n.zoneId;
+  scope = activeDim
+    ? "dim"
+    : n.inbox
+      ? "inbox"
+      : origin.scope === "starred"
+        ? "starred"
+        : "all";
+  editorHome = {
+    dimId: activeDim,
+    zoneId: origin.dimId === activeDim ? origin.zoneId : activeZone,
+    scope,
+    view: workspaceView,
+  };
+  if (n.type !== "dim" && activeDim)
+    rememberContext(activeDim, {
+      nodeId: n.id,
+      zoneId: activeZone,
+      view: workspaceView,
+      scroll: 0,
+    });
   if (follow && draft) trail.push(draft.id);
   else if (!wasOpen) trail = [];
-  if (!wasOpen && n.dimId && n.area === "storage") {
-    renderWorld();
-    scene?.focus(n.dimId, n.zoneId);
-    await scene?.revealDocument(n.id);
-  }
+
   const recoveredDraft = recovered(n);
   draft = recoveredDraft || clone(n);
   dirty = !!recoveredDraft;
@@ -516,10 +789,18 @@ function openNode(id, follow = false) {
 async function closeNow() {
   if (!draft) return;
   const id = draft.id;
+  await rememberReading();
   if (trail.length || focusAfterEdit)
     scene?.focus(activeDim || id, activeZone, false);
   await editorTransition(false, id);
   draft = null;
+  if (editorHome) {
+    activeDim = editorHome.dimId;
+    activeZone = editorHome.zoneId;
+    scope = editorHome.scope;
+    workspaceView = editorHome.view;
+  }
+  editorHome = null;
   dirty = false;
   trail = [];
   focusAfterEdit = false;
@@ -528,7 +809,10 @@ async function closeNow() {
   $("#world").inert = false;
   $("#sidebar").inert = false;
   renderWorld();
-  $("#canvas-container canvas")?.focus({ preventScroll: true });
+  (workspaceView === "room"
+    ? $("#canvas-container canvas")
+    : $("#workspace-search")
+  )?.focus({ preventScroll: true });
 }
 
 function renderEditor() {
@@ -536,12 +820,13 @@ function renderEditor() {
   if (!n) return;
   $("#editor").hidden = false;
   $("#editor").innerHTML =
-    `<header class="editor-header"><div class="editor-navigation"><button id="close-editor" class="back-world">← <span>Back to 3D</span></button>${trail.length ? '<button id="previous-document" class="secondary">← Previous</button>' : ""}<span class="editor-breadcrumb">${n.type === "dim" ? "YOUR DIM" : n.dimId ? esc(get(n.dimId)?.title) + " / " + esc(areaName(get(n.dimId), n.zoneId, n.area)) : "INDEPENDENT DOCUMENT"}</span></div><div class="editor-header-actions"><span id="save-status" role="status"></span><button id="save-node" class="primary" type="submit" form="editor-form">Save changes <kbd>⌘ S</kbd></button></div></header>
-<form id="editor-form"><fieldset id="editor-fields"><div class="editor-layout"><div class="editor-page"><div class="document-type">${dot(n)}<span>${typeNames[n.type]}</span></div><label for="node-title" class="sr-only">Title</label><input id="node-title" class="title-input" maxlength="160" required value="${esc(n.title)}" placeholder="Untitled ${n.type}"><label for="node-content" class="content-label">${n.type === "dim" ? "What belongs in this Dim?" : n.type === "note" || n.type === "idea" ? "Your thoughts" : "Description"}</label><textarea id="node-content" maxlength="100000" class="content-input ${["note", "idea"].includes(n.type) ? "long-content" : ""}" placeholder="Start with a thought…">${esc(n.content)}</textarea>
-${n.type === "dim" ? dimOverview(n, graph.nodes) : '<div id="structured-editor"></div>'}</div>
+    `<header class="editor-header"><div class="editor-navigation"><button id="close-editor" class="back-world">← <span>Back to ${workspaceView === "room" ? "3D" : "workspace"}</span></button>${trail.length ? '<button id="previous-document" class="secondary">← Previous</button>' : ""}<span class="editor-breadcrumb">${n.type === "dim" ? "YOUR DIM" : activeDim && activeDim !== n.dimId ? esc(get(activeDim)?.title) + " / REFERENCE" : n.dimId ? esc(get(n.dimId)?.title) + " / " + esc(areaName(get(n.dimId), n.zoneId, n.area)) : n.inbox ? "INBOX" : "INDEPENDENT DOCUMENT"}</span></div><div class="editor-header-actions"><button type="button" id="reading-mode" class="secondary" aria-pressed="${editorReading}">${editorReading ? "Show details" : "Focus"}</button><span id="save-status" role="status"></span><button id="save-node" class="primary" type="submit" form="editor-form">Save changes <kbd>⌘ S</kbd></button></div></header>
+<form id="editor-form"><fieldset id="editor-fields"><div class="editor-layout"><div class="editor-page">${n.type !== "dim" && activeDim && activeDim !== n.dimId ? `<div class="editor-reference-label">Reference in ${esc(get(activeDim)?.title)} · Editing the original in ${esc(get(n.dimId)?.title || "Independent documents")}. Changes appear everywhere.</div>` : ""}<div class="document-type">${dot(n)}<span>${typeNames[n.type]}</span></div><label for="node-title" class="sr-only">Title</label><input id="node-title" class="title-input" maxlength="160" required value="${esc(n.title)}" placeholder="Untitled ${n.type}"><label for="node-content" class="content-label">${n.type === "dim" ? "What belongs in this Dim?" : n.type === "note" || n.type === "idea" ? "Your thoughts" : "Description"}</label>${["note", "idea"].includes(n.type) ? `<div class="note-tools" aria-label="Note formatting"><button type="button" data-format="heading" title="Heading">H</button><button type="button" data-format="bold" title="Bold"><b>B</b></button><button type="button" data-format="bullet" title="Bulleted list">• List</button><button type="button" data-format="link" title="Web link">↗ Link</button><span></span><button type="button" id="note-preview-toggle" aria-pressed="${notePreview}">${notePreview ? "Write" : "Read preview"}</button></div>` : ""}<textarea id="node-content" maxlength="100000" class="content-input ${["note", "idea"].includes(n.type) ? "long-content" : ""}" placeholder="Start with a thought…">${esc(n.content)}</textarea>
+<div id="markdown-preview" class="markdown-preview" hidden></div><div id="note-word-count" class="note-word-count"></div>
+${n.type === "dim" ? dimOverview(n, graph.nodes, graph.references || []) : '<div id="structured-editor"></div>'}</div>
 <aside class="document-details"><h2>${n.type === "dim" ? "Room details" : "Document details"}</h2>${
       n.type === "dim"
-        ? `<label for="dim-color">Room accent</label><input type="color" id="dim-color" value="${n.payload.color}"><p class="field-hint">A Dim and its contents move together.</p>`
+        ? `<label for="dim-goal">Project goal</label><textarea id="dim-goal" maxlength="400" rows="3">${esc(n.payload.goal || "")}</textarea><label for="dim-next">Next action</label><input id="dim-next" maxlength="400" value="${esc(n.payload.nextAction || "")}"><label for="dim-color">Room accent</label><input type="color" id="dim-color" value="${n.payload.color}"><p class="field-hint">A Dim and its contents move together.</p>`
         : `<label for="document-dim">Lives in</label><select id="document-dim"><option value="">Independent document</option>${dims()
             .map(
               (d) =>
@@ -551,7 +836,7 @@ ${n.type === "dim" ? dimOverview(n, graph.nodes) : '<div id="structured-editor">
               "",
             )}</select><label for="document-zone">Desk or Storage</label><select id="document-zone" ${n.dimId ? "" : "disabled"}>${areaOptions(get(n.dimId), n.zoneId)}</select><button type="button" id="place-in-room" class="text-button" ${n.dimId ? "" : "disabled"}>Arrange in area ↗</button>`
     }
-<details class="position-details"><summary>Position in space</summary><div class="coordinates">${["x", "y", "z"].map((a) => `<label>${a.toUpperCase()}<input type="number" data-coordinate="${a}" aria-label="${a.toUpperCase()} coordinate" required min="-5000" max="5000" step="any" value="${n[a]}"></label>`).join("")}</div><button id="focus-on-return" type="button" class="text-button">Focus in 3D on return</button></details>
+${n.type !== "dim" ? `<div class="document-tags"><label for="document-tags">Tags <span>comma separated</span></label><input id="document-tags" value="${esc((n.tags || []).join(", "))}" placeholder="research, launch"><label><input type="checkbox" id="document-star" ${n.starred ? "checked" : ""}> Favorite</label><button type="button" class="text-button" data-pin="${n.id}">Pin a reference to another Dim ↗</button></div>` : ""}<details class="position-details"><summary>Position in space</summary><div class="coordinates">${["x", "y", "z"].map((a) => `<label>${a.toUpperCase()}<input type="number" data-coordinate="${a}" aria-label="${a.toUpperCase()} coordinate" required min="-5000" max="5000" step="any" value="${n[a]}"></label>`).join("")}</div><button id="focus-on-return" type="button" class="text-button">Focus in 3D on return</button></details>
 <section class="document-connections"><div class="details-heading"><h2>Connections</h2><span>${graph.edges.filter((e) => e.source === n.id || e.target === n.id).length}</span></div><div id="connection-list"></div><label for="connection-search">Find a destination</label><input id="connection-search" type="search" placeholder="Search Dims and documents…"><label for="connection-target" class="sr-only">Connection destination</label><select id="connection-target"><option value="">Choose a destination…</option>${graph.nodes
       .filter((d) => d.id !== n.id)
       .map(
@@ -563,10 +848,28 @@ ${n.type === "dim" ? dimOverview(n, graph.nodes) : '<div id="structured-editor">
       )}</select><label for="connection-label">Relationship <span>(optional)</span></label><input id="connection-label" maxlength="80" placeholder="e.g. inspires, depends on"><button type="button" id="add-connection" class="secondary full-width">＋ Connect</button><p class="field-hint">Links save immediately. Follow a card to open it.</p></section><div class="document-bottom"><span>Created ${esc(new Date(n.createdAt).toLocaleDateString())}</span><button type="button" id="trash-node" class="danger-text">Move ${n.type === "dim" ? "Dim" : "document"} to Trash</button></div></aside></div></fieldset></form>`;
   if (n.type !== "dim") renderPayload(draft, $("#structured-editor"));
   renderConnections();
+  updateReadingView();
+  $("#reading-mode").onclick = () => {
+    editorReading = !editorReading;
+    safeSet("dimention:focus", editorReading ? "1" : "0");
+    updateReadingView();
+  };
+  if ($("#note-preview-toggle"))
+    $("#note-preview-toggle").onclick = () => {
+      notePreview = !notePreview;
+      safeSet("dimention:preview", notePreview ? "1" : "0");
+      updateReadingView();
+    };
   saveStatus();
   $("#editor-form").onsubmit = (e) => {
     e.preventDefault();
     save();
+  };
+  $("#editor-form").onscroll = () => {
+    clearTimeout(readingTimer);
+    readingTimer = setTimeout(() => {
+      if (!busy && draft) rememberReading();
+    }, 450);
   };
   $("#editor-form").oninput = editorInput;
   $("#editor-form").onclick = editorAction;
@@ -612,6 +915,14 @@ function editorInput(e) {
     d = el.dataset;
   if (el.id === "node-title") draft.title = el.value;
   else if (el.id === "node-content") draft.content = el.value;
+  else if (el.id === "dim-goal") draft.payload.goal = el.value;
+  else if (el.id === "dim-next") draft.payload.nextAction = el.value;
+  else if (el.id === "document-tags")
+    draft.tags = el.value
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+  else if (el.id === "document-star") draft.starred = el.checked;
   else if (el.id === "dim-color") draft.payload.color = el.value;
   else if (el.id === "document-dim") {
     draft.dimId = el.value || null;
@@ -644,6 +955,7 @@ function editorInput(e) {
     const [r, c] = d.cell.split(",").map(Number);
     draft.payload.rows[r][c] = el.value;
   } else return;
+  updateWordCount();
   markDirty();
 }
 async function editorAction(e) {
@@ -724,16 +1036,36 @@ function save() {
         activeZone !== (saved.type === "dim" ? null : saved.zoneId)
       )
         focusAfterEdit = true;
-      activeDim = saved.type === "dim" ? saved.id : saved.dimId;
-      activeZone = saved.type === "dim" ? null : saved.zoneId;
+      const ref = (graph.references || []).find(
+        (r) => r.dimId === activeDim && r.nodeId === saved.id,
+      );
+      activeDim = ref
+        ? ref.dimId
+        : saved.type === "dim"
+          ? saved.id
+          : saved.dimId;
+      activeZone = ref
+        ? ref.zoneId
+        : saved.type === "dim"
+          ? null
+          : saved.zoneId;
+      if (editorHome && editorHome.dimId !== activeDim)
+        editorHome = {
+          dimId: activeDim,
+          zoneId: activeZone,
+          scope: activeDim ? "dim" : "all",
+          view: workspaceView,
+        };
       document.querySelector(".editor-breadcrumb").textContent =
         saved.type === "dim"
           ? "YOUR DIM"
-          : saved.dimId
-            ? get(saved.dimId).title +
-              " / " +
-              areaName(get(saved.dimId), saved.zoneId, saved.area)
-            : "INDEPENDENT DOCUMENT";
+          : ref
+            ? get(activeDim).title + " / REFERENCE"
+            : saved.dimId
+              ? get(saved.dimId).title +
+                " / " +
+                areaName(get(saved.dimId), saved.zoneId, saved.area)
+              : "INDEPENDENT DOCUMENT";
       document
         .querySelectorAll("[data-coordinate]")
         .forEach((el) => (el.value = saved[el.dataset.coordinate]));
@@ -798,6 +1130,7 @@ function createDocument(
       },
     });
     graph.nodes = [...graph.nodes, n];
+    workspaceOptions = { ...workspaceOptions, query: "", tag: "", type: "all" };
     await openNow(n.id, { follow: !!draft });
     $("#node-title").select();
   });
@@ -971,6 +1304,95 @@ document.addEventListener("click", async (e) => {
   if (!b || b.disabled) return;
   const d = b.dataset;
   if ((busy || saving) && !d.answer) return;
+  if (d.quickCapture !== undefined) return workspace.capture();
+  if (d.projectPlan) return workspace.plan(d.projectPlan);
+  if (d.pin) return workspace.reference({ nodeId: d.pin });
+  if (d.addReference)
+    return workspace.reference({ dimId: d.parent, zoneId: d.addReference });
+  if (d.unpin)
+    return navigate(async () => {
+      await api("/references/" + d.unpin, { method: "DELETE" });
+      await refresh();
+      if (draft) renderEditor();
+      toast("Reference removed. Original document kept.");
+    });
+  if (d.star || d.fileInbox)
+    return mutateArea(async () => {
+      const n = get(d.star || d.fileInbox);
+      await api("/nodes/" + n.id, {
+        method: "PATCH",
+        body: d.star ? { starred: !n.starred } : { inbox: false },
+      });
+      await refresh();
+    });
+  if (d.workspaceView) {
+    workspaceView = d.workspaceView;
+    renderWorld();
+    if (workspaceView === "room") {
+      if (activeDim) scene?.focus(activeDim, activeZone);
+      else scene?.fit();
+    }
+    if (activeDim) rememberContext(activeDim, { view: workspaceView });
+    return;
+  }
+  if (d.boardZone !== undefined) {
+    activeZone = d.boardZone || null;
+    multi.clear();
+    renderWorld();
+    rememberContext(activeDim, { zoneId: activeZone });
+    return;
+  }
+  if (d.tag) {
+    workspaceOptions.tag = d.tag;
+    workspaceLimit = 60;
+    renderKnowledge();
+    return;
+  }
+  if (d.clearFilters !== undefined) {
+    workspaceOptions = { query: "", tag: "", type: "all", sort: "updated" };
+    renderKnowledge();
+    return;
+  }
+  if (d.moreDocuments !== undefined) {
+    workspaceLimit += 60;
+    renderKnowledge();
+    return;
+  }
+  if (d.bulkMove !== undefined) return areas.moveDoc([...multi]);
+  if (d.bulkStar !== undefined)
+    return mutateArea(async () => {
+      graph = await api("/favorites", {
+        method: "PATCH",
+        body: { ids: [...multi], starred: true },
+      });
+      renderWorld();
+      toast("Selected documents added to Favorites.");
+    });
+  if (d.related) return showRelated(d.related);
+  if (d.commandOpen) {
+    $("#dialog").close();
+    return get(d.commandOpen)?.type === "dim"
+      ? navigate(async () => {
+          if (draft) await closeNow();
+          focusDim(d.commandOpen);
+        })
+      : openNode(d.commandOpen, !!draft);
+  }
+  if (d.format) return formatNote(d.format);
+  if (d.resume)
+    return navigate(async () => {
+      const c = (graph.contexts || []).find((c) => c.dimId === d.resume);
+      if (!c?.nodeId || !get(c.nodeId)) {
+        toast("Choose a document to start this Dim.");
+        return;
+      }
+      const scroll = c.scroll;
+      activeDim = d.resume;
+      activeZone = c.zoneId;
+      workspaceView = c.view;
+      await openNow(c.nodeId);
+      $("#editor-form").scrollTop = scroll;
+    });
   if (d.newDim !== undefined) return newDim();
   if (d.newZone) return areas.edit(d.parent, d.newZone);
   if (d.renameZone) return areas.edit(d.parent, null, d.renameZone);
@@ -982,6 +1404,11 @@ document.addEventListener("click", async (e) => {
     return navigate(async () => {
       if (draft) await closeNow();
       focusDim(d.parent, d.zone);
+      if (d.spatial !== undefined) {
+        workspaceView = "room";
+        renderWorld();
+        scene?.focus(d.parent, d.zone);
+      }
     });
   if (d.allAreas) return focusDim(d.allAreas);
   if (d.create)
@@ -992,19 +1419,27 @@ document.addEventListener("click", async (e) => {
       d.zoneId || activeZone,
     );
   if (d.open)
-    return mode === "multi" && !draft ? toggle(d.open) : openNode(d.open);
+    return mode === "multi" && !draft && workspaceView === "room"
+      ? toggle(d.open)
+      : openNode(d.open);
   if (d.follow) return openNode(d.follow, true);
   if (d.route) {
     $("#dialog").close();
     return openNode(d.route, !!draft);
   }
   if (d.toggle) return toggle(d.toggle);
-  if (d.room) return focusDim(d.room);
+  if (d.room)
+    return navigate(async () => {
+      if (draft) await closeNow();
+      focusDim(d.room);
+    });
   if (d.scope || d.showAll !== undefined) {
     activeDim = null;
     activeZone = null;
     multi.clear();
     scope = d.scope || "all";
+    workspaceView = scope === "all" ? "room" : "list";
+    workspaceOptions = { ...workspaceOptions, query: "", tag: "", type: "all" };
     renderWorld();
     scene?.fit();
     return;
@@ -1107,6 +1542,7 @@ $("#home").onclick = () => {
   activeZone = null;
   multi.clear();
   scope = "all";
+  workspaceView = "room";
   query = "";
   $("#search").value = "";
   renderWorld();
@@ -1125,6 +1561,11 @@ $("#snap").onchange = () => setMode(mode);
 document.querySelectorAll("[data-view]").forEach((button) => {
   button.onclick = () => scene?.setView(button.dataset.view);
 });
+$("#camera-lock").onchange = (e) => scene?.setCameraLocked(e.target.checked);
+$("#show-all-links").onchange = (e) => {
+  showAllLinks = e.target.checked;
+  renderWorld();
+};
 $("#fit").onclick = () => scene?.fit();
 $("#reset").onclick = () => scene?.fit(true);
 $("#new-document").onclick = () => navigate(() => createMenu());
@@ -1138,7 +1579,7 @@ $("#export").onclick = exportJSON;
 $("#import").onclick = () => $("#import-file").click();
 $("#help").onclick = () =>
   modal(
-    `<div class="dialog-heading"><div><span class="eyebrow">WELCOME TO YOUR WORLD</span><h2>A house for your thoughts.</h2></div><button data-close-dialog aria-label="Close guide">×</button></div><dl class="guide"><dt>Create a Dim</dt><dd>A room for a topic. Click its name in Quick access to zoom in. Create named Desks for active work and Storage for reference using the organizer on the right.</dd><dt>Open and return</dt><dd>Click a document to expand it into a full reading page. Back to 3D or Escape returns it to its place. Use Save or Ctrl/Cmd+S to keep edits.</dd><dt>Move around</dt><dd>Drag empty space to orbit. Pan or right-drag to pan. Scroll to zoom. Use Room view to explore the furnished space, and Fit all to find everything. Aligned 3D straightens the camera to the room axes; Top looks directly down at the floor. The room grid follows 50-unit Snap spacing.</dd><dt>Organize your Dim</dt><dd>Pick an area, then use New document or Bring existing. Move documents between named areas using their arrow button. Renaming an area keeps its contents; removing one moves its contents to another area you choose.</dd><dt>Open Storage</dt><dd>Click a cabinet or its Storage area to slide the drawers open and reveal documents. Close Storage tucks them away. Move and Select items expose stored cards for placement. Opening a stored note from the sidebar opens its cabinet first. System reduced-motion preferences are respected.</dd><dt>Reserved space</dt><dd>Independent documents stay outside every Dim. Assign a document to a Desk or Storage to bring it inside. Moving a Dim carries its contents and stops before another room or outside document.</dd><dt>Arrange your world</dt><dd>Choose Select items or Shift-click cards to select several. Align them, snap to a 50-unit grid, or move them together. Moving a Dim carries its contents. Movement saves immediately and offers Undo.</dd><dt>Follow connections</dt><dd>Click a line label, open Connections in the sidebar, or follow the incoming and outgoing cards in an editor. Dims can connect to Dims or documents.</dd><dt>Keep your work safe</dt><dd>Deleted items go to Trash. Restore a Dim with its contents and connections. Export includes Trash; import previews and appends content without replacing your existing world.</dd></dl><button data-close-dialog class="primary">Make yourself at home</button>`,
+    `<div class="dialog-heading"><h2>Your spatial notebook</h2><button data-close-dialog aria-label="Close guide">×</button></div><dl class="guide"><dt>Three ways to work</dt><dd>3D Space preserves every Dim and document’s position. Board brings active work and Storage into readable areas. List helps scan and sort. Switching views never moves your content.</dd><dt>Capture and find</dt><dd>Quick capture saves a note to Inbox. Ctrl/Cmd+Shift+N opens capture; Ctrl/Cmd+K searches all content. Tags and Favorites help you find it again.</dd><dt>Your next step</dt><dd>Set a goal and next action in each Dim. Resume this Dim restores your last document and reading position. View and area choices are saved locally in SQLite.</dd><dt>Organize</dt><dd>Create named Desks and Storage areas. Move documents, or add references to one original in several Dims. Select multiple cards to move or favorite them together.</dd><dt>Write and connect</dt><dd>Notes support Markdown text and a reading preview. Focus hides the details. Save or Ctrl/Cmd+S commits edits; drafts are recovered in this browser. Connections show labeled incoming and outgoing relationships.</dd><dt>Navigate space</dt><dd>The camera starts aligned. Drag to pan with Lock angle enabled; uncheck it to orbit. Scroll zooms, Move changes XYZ, and Fit all brings everything into view. Connections appear for selected items; All connections reveals the full graph.</dd><dt>Keep your work</dt><dd>Dim boundaries protect their space at every height. Trash is reversible. Export JSON includes all documents, references, working context and Trash; imports append with new IDs.</dd></dl><button data-close-dialog class="primary">Start working</button>`,
   );
 document.addEventListener("input", (e) => {
   if (!draft || !["document-dim", "document-zone"].includes(e.target.id))
@@ -1167,6 +1608,14 @@ document.addEventListener("keydown", (e) => {
       renderWorld();
     }
   }
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "n") {
+    e.preventDefault();
+    workspace.capture();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    commandSearch();
+  }
   if (e.key === "/" && !e.target.matches("input,textarea,select")) {
     e.preventDefault();
     if (!draft) {
@@ -1185,11 +1634,16 @@ function focusDim(id, zoneId = null) {
   activeDim = id;
   activeZone = zoneId;
   scope = "dim";
+  workspaceView =
+    (graph.contexts || []).find((c) => c.dimId === id)?.view || "board";
+  workspaceOptions = { ...workspaceOptions, query: "", tag: "", type: "all" };
+  workspaceLimit = 60;
   query = "";
   $("#search").value = "";
   multi.clear();
   renderWorld();
   scene?.focus(id, zoneId);
+  rememberContext(id, { zoneId, view: workspaceView });
 }
 async function mutateArea(action) {
   if (busy || saving) return;
@@ -1203,7 +1657,7 @@ async function mutateArea(action) {
   }
 }
 function commitArea(next, { dimId, zoneId }) {
-  graph = { nodes: next.nodes, edges: next.edges };
+  graph = { ...graph, ...next };
   activeDim = dimId;
   activeZone = zoneId;
   scope = dimId ? "dim" : "all";
@@ -1218,8 +1672,19 @@ function commitArea(next, { dimId, zoneId }) {
   renderWorld();
   if (dimId) scene?.focus(dimId, zoneId);
   else scene?.fit();
+  if (dimId) rememberContext(dimId, { zoneId, view: workspaceView });
   toast("Organization saved.");
 }
+const workspace = workspaceActions({
+  getGraph: () => graph,
+  get,
+  modal,
+  navigate,
+  mutate: mutateArea,
+  api,
+  refresh,
+  toast,
+});
 const areas = areaActions({
   getGraph: () => graph,
   get,
@@ -1265,6 +1730,10 @@ async function load() {
       scene = createWorkspaceScene($("#canvas-container"), {
         onSelect: (id) =>
           get(id)?.type === "dim" ? focusDim(id) : openNode(id),
+        onReference: (dimId, nodeId) => {
+          activeDim = dimId;
+          openNode(nodeId);
+        },
         onZone: ({ dimId, zoneId }) =>
           focusDim(
             dimId,
@@ -1295,6 +1764,10 @@ async function load() {
     }
     renderWorld();
     scene?.fit(true);
+    if (!scene) {
+      workspaceView = "board";
+      renderWorld();
+    }
     const r = graph.nodes.find((n) => recovered(n));
     if (r) await openNow(r.id);
   } catch (e) {

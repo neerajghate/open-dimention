@@ -45,6 +45,19 @@ function validateNode(input) {
   }
   if (typeof input.starred !== "boolean")
     fail("Starred must be true or false.");
+  const inbox = input.inbox ?? false;
+  if (typeof inbox !== "boolean") fail("Inbox must be true or false.");
+  if (inbox && (input.type === "dim" || input.dimId))
+    fail("Inbox items must be independent documents.");
+  const tags = input.tags ?? [];
+  if (!Array.isArray(tags) || tags.length > 12) fail("Use up to 12 tags.");
+  const cleanTags = [
+    ...new Set(
+      tags
+        .map((tag) => string(tag, "Tag", 40).trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ];
   const payload = input.payload ?? {};
   if (!payload || typeof payload !== "object" || Array.isArray(payload))
     fail("Invalid structured data.");
@@ -59,6 +72,8 @@ function validateNode(input) {
       names = new Set();
     cleanPayload = {
       color,
+      goal: string(payload.goal ?? "", "Goal", 400),
+      nextAction: string(payload.nextAction ?? "", "Next action", 400),
       zones: zones.map((z) => {
         if (!z || !["desk", "storage"].includes(z.type))
           fail("Choose Desk or Storage.");
@@ -132,6 +147,8 @@ function validateNode(input) {
     y: input.y,
     z: input.z,
     starred: input.starred,
+    inbox,
+    tags: cleanTags,
     payload: cleanPayload,
     dimId,
     area,
@@ -237,6 +254,8 @@ export function createStore(path, { seed = true } = {}) {
     ["deletedAt", "TEXT"],
     ["deleteBatch", "TEXT"],
     ["zoneId", "TEXT"],
+    ["inbox", "INTEGER NOT NULL DEFAULT 0"],
+    ["tags", "TEXT NOT NULL DEFAULT '[]'"],
   ]) {
     if (!columns.has(name))
       db.exec(`ALTER TABLE nodes ADD COLUMN ${name} ${definition}`);
@@ -244,11 +263,22 @@ export function createStore(path, { seed = true } = {}) {
   db.exec(
     "CREATE INDEX IF NOT EXISTS nodes_dim ON nodes(dimId); CREATE INDEX IF NOT EXISTS nodes_trash ON nodes(deletedAt);",
   );
+  db.exec(`CREATE TABLE IF NOT EXISTS document_references (
+    id TEXT PRIMARY KEY, nodeId TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    dimId TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, zoneId TEXT NOT NULL,
+    createdAt TEXT NOT NULL, UNIQUE(nodeId,dimId));
+    CREATE TABLE IF NOT EXISTS dim_context (
+    dimId TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+    nodeId TEXT REFERENCES nodes(id) ON DELETE SET NULL, zoneId TEXT,
+    view TEXT NOT NULL DEFAULT 'board', scroll REAL NOT NULL DEFAULT 0,
+    updatedAt TEXT NOT NULL);`);
   const parse = (row) =>
     row
       ? {
           ...row,
           starred: Boolean(row.starred),
+          inbox: Boolean(row.inbox),
+          tags: JSON.parse(row.tags || "[]"),
           payload: JSON.parse(row.payload),
         }
       : null;
@@ -292,6 +322,16 @@ export function createStore(path, { seed = true } = {}) {
             "Move documents to another area before removing their Desk or Storage.",
           );
       }
+      for (const r of db.prepare("SELECT * FROM document_references").all()) {
+        const dim = getNode(r.dimId),
+          node = getNode(r.nodeId);
+        if (
+          dim?.type !== "dim" ||
+          node?.type === "dim" ||
+          !zonesOf(dim).some((z) => z.id === r.zoneId)
+        )
+          fail("References must belong to an existing Dim area.");
+      }
       db.exec("COMMIT");
       return result;
     } catch (error) {
@@ -317,7 +357,7 @@ export function createStore(path, { seed = true } = {}) {
     validDim(n);
     const now = new Date().toISOString();
     db.prepare(
-      "INSERT INTO nodes (id,title,type,content,x,y,z,starred,payload,createdAt,updatedAt,dimId,area,zoneId) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO nodes (id,title,type,content,x,y,z,starred,payload,createdAt,updatedAt,dimId,area,zoneId,inbox,tags) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     ).run(
       id,
       n.title,
@@ -333,6 +373,8 @@ export function createStore(path, { seed = true } = {}) {
       n.dimId,
       n.area,
       n.zoneId,
+      Number(n.inbox),
+      JSON.stringify(n.tags),
     );
     return getNode(id);
   };
@@ -390,6 +432,35 @@ export function createStore(path, { seed = true } = {}) {
         "SELECT e.* FROM edges e JOIN nodes s ON s.id=e.source JOIN nodes t ON t.id=e.target WHERE s.deletedAt IS NULL AND t.deletedAt IS NULL",
       )
       .all(),
+    references: db
+      .prepare(
+        "SELECT r.* FROM document_references r JOIN nodes n ON n.id=r.nodeId JOIN nodes d ON d.id=r.dimId WHERE n.deletedAt IS NULL AND d.deletedAt IS NULL",
+      )
+      .all(),
+    contexts: db
+      .prepare(
+        "SELECT c.* FROM dim_context c JOIN nodes d ON d.id=c.dimId WHERE d.deletedAt IS NULL",
+      )
+      .all()
+      .map((c) => {
+        const node = c.nodeId ? getNode(c.nodeId) : null;
+        const available =
+          node &&
+          !node.deletedAt &&
+          (node.dimId === c.dimId ||
+            db
+              .prepare(
+                "SELECT id FROM document_references WHERE nodeId=? AND dimId=?",
+              )
+              .get(node.id, c.dimId));
+        return {
+          ...c,
+          nodeId: available ? c.nodeId : null,
+          zoneId: zonesOf(getNode(c.dimId)).some((z) => z.id === c.zoneId)
+            ? c.zoneId
+            : null,
+        };
+      }),
   });
   // Reconcile only newly restored/imported items; established content stays put.
   const repairLayout = (ids) => {
@@ -498,6 +569,129 @@ export function createStore(path, { seed = true } = {}) {
     });
   return {
     graph,
+    favoriteNodes(input) {
+      if (
+        !input ||
+        !Array.isArray(input.ids) ||
+        !input.ids.length ||
+        input.ids.length > 1000 ||
+        new Set(input.ids).size !== input.ids.length ||
+        typeof input.starred !== "boolean"
+      )
+        fail("Choose unique documents and a favorite state.");
+      return transaction(() => {
+        for (const id of input.ids) {
+          if (typeof id !== "string") fail("Choose valid documents.");
+          const n = active(id);
+          if (n.type === "dim") fail("Choose documents to favorite.");
+        }
+        const now = new Date().toISOString();
+        for (const id of input.ids)
+          db.prepare("UPDATE nodes SET starred=?,updatedAt=? WHERE id=?").run(
+            Number(input.starred),
+            now,
+            id,
+          );
+        return graph();
+      });
+    },
+    createReference(input) {
+      if (!input || typeof input !== "object")
+        fail("Choose a document and destination.");
+      const nodeId = string(input.nodeId, "Document", 100),
+        dimId = string(input.dimId, "Dim", 100),
+        zoneId = string(input.zoneId, "Area", 100);
+      const node = active(nodeId),
+        dim = active(dimId);
+      if (node.type === "dim" || dim.type !== "dim")
+        fail("Pin a document to a Dim.");
+      if (node.dimId === dimId)
+        fail("This document already lives in this Dim.");
+      if (!zonesOf(dim).some((z) => z.id === zoneId))
+        fail("Choose an area in this Dim.");
+      if (
+        db
+          .prepare(
+            "SELECT id FROM document_references WHERE nodeId=? AND dimId=?",
+          )
+          .get(nodeId, dimId)
+      )
+        throw new ApiError(
+          409,
+          "This document is already referenced in this Dim.",
+        );
+      if (
+        db.prepare("SELECT count(*) AS count FROM document_references").get()
+          .count >= 5000
+      )
+        fail("This world supports 5000 references.");
+      const r = {
+        id: randomUUID(),
+        nodeId,
+        dimId,
+        zoneId,
+        createdAt: new Date().toISOString(),
+      };
+      db.prepare("INSERT INTO document_references VALUES(?,?,?,?,?)").run(
+        r.id,
+        nodeId,
+        dimId,
+        zoneId,
+        r.createdAt,
+      );
+      return r;
+    },
+    deleteReference(id) {
+      if (
+        !db.prepare("DELETE FROM document_references WHERE id=?").run(id)
+          .changes
+      )
+        throw new ApiError(404, "Reference not found.");
+    },
+    saveContext(dimId, input) {
+      if (!input || typeof input !== "object" || Array.isArray(input))
+        fail("Invalid working context.");
+      const dim = active(dimId);
+      if (dim.type !== "dim") fail("Choose a Dim.");
+      const previous = db
+        .prepare("SELECT * FROM dim_context WHERE dimId=?")
+        .get(dimId);
+      const c = {
+        dimId,
+        nodeId: null,
+        zoneId: null,
+        view: "board",
+        scroll: 0,
+        ...previous,
+        ...input,
+        updatedAt: new Date().toISOString(),
+      };
+      c.dimId = dimId;
+      if (!["room", "board", "list"].includes(c.view))
+        fail("Choose Room, Board or List view.");
+      if (!Number.isFinite(c.scroll) || c.scroll < 0 || c.scroll > 10000000)
+        fail("Invalid reading position.");
+      if (c.zoneId != null && !zonesOf(dim).some((z) => z.id === c.zoneId))
+        fail("Choose an area in this Dim.");
+      if (c.nodeId != null) {
+        if (typeof c.nodeId !== "string") fail("Choose a document.");
+        const n = active(c.nodeId);
+        if (
+          n.type === "dim" ||
+          (n.dimId !== dimId &&
+            !db
+              .prepare(
+                "SELECT id FROM document_references WHERE nodeId=? AND dimId=?",
+              )
+              .get(c.nodeId, dimId))
+        )
+          fail("Resume a document belonging to or referenced in this Dim.");
+      }
+      db.prepare(
+        "INSERT INTO dim_context(dimId,nodeId,zoneId,view,scroll,updatedAt) VALUES(?,?,?,?,?,?) ON CONFLICT(dimId) DO UPDATE SET nodeId=excluded.nodeId,zoneId=excluded.zoneId,view=excluded.view,scroll=excluded.scroll,updatedAt=excluded.updatedAt",
+      ).run(dimId, c.nodeId, c.zoneId, c.view, c.scroll, c.updatedAt);
+      return c;
+    },
     trash: () => ({
       nodes: db
         .prepare(
@@ -507,13 +701,15 @@ export function createStore(path, { seed = true } = {}) {
         .map(parse),
     }),
     export: () => ({
-      version: 3,
+      version: 4,
       exportedAt: new Date().toISOString(),
       nodes: db
         .prepare("SELECT * FROM nodes ORDER BY createdAt,id")
         .all()
         .map(parse),
       edges: db.prepare("SELECT * FROM edges").all(),
+      references: db.prepare("SELECT * FROM document_references").all(),
+      contexts: db.prepare("SELECT * FROM dim_context").all(),
     }),
     getNode,
     createNode(node) {
@@ -553,6 +749,7 @@ export function createStore(path, { seed = true } = {}) {
       const n = validateNode({
         ...previous,
         ...input,
+        inbox: input.dimId ? false : (input.inbox ?? previous.inbox),
         ...(previous.type === "dim"
           ? { payload: { ...previous.payload, ...input.payload } }
           : {}),
@@ -597,7 +794,7 @@ export function createStore(path, { seed = true } = {}) {
             writePosition(child.id, moved);
           }
         db.prepare(
-          "UPDATE nodes SET title=?,type=?,content=?,x=?,y=?,z=?,starred=?,payload=?,updatedAt=?,dimId=?,area=?,zoneId=? WHERE id=?",
+          "UPDATE nodes SET title=?,type=?,content=?,x=?,y=?,z=?,starred=?,payload=?,updatedAt=?,dimId=?,area=?,zoneId=?,inbox=?,tags=? WHERE id=?",
         ).run(
           n.title,
           n.type,
@@ -611,8 +808,14 @@ export function createStore(path, { seed = true } = {}) {
           n.dimId,
           n.area,
           n.zoneId,
+          Number(n.inbox),
+          JSON.stringify(n.tags),
           id,
         );
+        if (n.dimId)
+          db.prepare(
+            "DELETE FROM document_references WHERE nodeId=? AND dimId=?",
+          ).run(id, n.dimId);
         return getNode(id);
       });
     },
@@ -666,6 +869,7 @@ export function createStore(path, { seed = true } = {}) {
           const next = {
             ...n,
             dimId,
+            inbox: false,
             area: zone?.type ?? area,
             zoneId: zone?.id ?? null,
           };
@@ -677,12 +881,13 @@ export function createStore(path, { seed = true } = {}) {
           );
           validateNode(next);
           validDim(next);
-          db.prepare("UPDATE nodes SET dimId=?,area=?,zoneId=? WHERE id=?").run(
-            next.dimId,
-            next.area,
-            next.zoneId,
-            id,
-          );
+          db.prepare(
+            "UPDATE nodes SET dimId=?,area=?,zoneId=?,inbox=0 WHERE id=?",
+          ).run(next.dimId, next.area, next.zoneId, id);
+          if (dimId)
+            db.prepare(
+              "DELETE FROM document_references WHERE nodeId=? AND dimId=?",
+            ).run(id, dimId);
           writePosition(id, next);
         }
         return graph();
@@ -750,6 +955,12 @@ export function createStore(path, { seed = true } = {}) {
         db.prepare(
           "UPDATE nodes SET zoneId=?,area=? WHERE dimId=? AND zoneId=?",
         ).run(target.id, target.type, dimId, zoneId);
+        db.prepare(
+          "UPDATE document_references SET zoneId=? WHERE dimId=? AND zoneId=?",
+        ).run(target.id, dimId, zoneId);
+        db.prepare(
+          "UPDATE dim_context SET zoneId=? WHERE dimId=? AND zoneId=?",
+        ).run(target.id, dimId, zoneId);
         const counts = new Map();
         for (const n of graph().nodes.filter((n) => n.dimId === dimId)) {
           const count = counts.get(n.zoneId) || 0;
@@ -763,11 +974,11 @@ export function createStore(path, { seed = true } = {}) {
       if (
         !input ||
         typeof input !== "object" ||
-        ![1, 2, 3].includes(input.version ?? 1) ||
+        ![1, 2, 3, 4].includes(input.version ?? 1) ||
         !Array.isArray(input.nodes) ||
         !Array.isArray(input.edges)
       )
-        fail("Choose a Dimention JSON export (version 1, 2 or 3).");
+        fail("Choose a Dimention JSON export (version 1, 2, 3 or 4).");
       if (input.nodes.length > 1000 || input.edges.length > 5000)
         fail("Import supports up to 1000 items and 5000 connections.");
       const ids = new Map(),
@@ -850,6 +1061,70 @@ export function createStore(path, { seed = true } = {}) {
         connections: edges.length,
         trashed: validated.filter((n) => n.deletedAt).length,
       };
+      if (
+        !Array.isArray(input.references ?? []) ||
+        (input.references?.length || 0) > 5000 ||
+        !Array.isArray(input.contexts ?? []) ||
+        (input.contexts?.length || 0) > 1000
+      )
+        fail("Invalid references or working contexts.");
+      const refPairs = new Set();
+      const references = (input.references ?? []).map((r) => {
+        const n = lookup.get(r?.nodeId),
+          d = lookup.get(r?.dimId),
+          pair = JSON.stringify([r?.nodeId, r?.dimId]);
+        if (
+          !n ||
+          n.type === "dim" ||
+          d?.type !== "dim" ||
+          n.dimId === d.id ||
+          !zonesOf(d).some((z) => z.id === r.zoneId) ||
+          refPairs.has(pair)
+        )
+          fail(
+            "Imported references must link a document to a unique valid Dim area.",
+          );
+        refPairs.add(pair);
+        return { nodeId: r.nodeId, dimId: r.dimId, zoneId: r.zoneId };
+      });
+      if (
+        db.prepare("SELECT count(*) AS count FROM document_references").get()
+          .count +
+          references.length >
+        5000
+      )
+        fail("This world supports 5000 references.");
+      const contextDims = new Set();
+      const contexts = (input.contexts ?? []).map((c) => {
+        const dim = lookup.get(c?.dimId),
+          node = lookup.get(c?.nodeId);
+        if (
+          dim?.type !== "dim" ||
+          contextDims.has(c.dimId) ||
+          !["room", "board", "list"].includes(c.view) ||
+          !Number.isFinite(c.scroll ?? 0) ||
+          (c.scroll ?? 0) < 0 ||
+          (c.scroll ?? 0) > 10000000
+        )
+          fail("Invalid imported working context.");
+        if (c.zoneId != null && !zonesOf(dim).some((z) => z.id === c.zoneId))
+          fail("Invalid context area.");
+        // Stale last-document pointers can occur after moving or unpinning an item.
+        const available =
+          node &&
+          node.type !== "dim" &&
+          (node.dimId === dim.id ||
+            references.some((r) => r.nodeId === node.id && r.dimId === dim.id));
+        contextDims.add(c.dimId);
+        return {
+          dimId: dim.id,
+          nodeId: available ? node.id : null,
+          zoneId: c.zoneId ?? null,
+          view: c.view,
+          scroll: c.scroll ?? 0,
+        };
+      });
+      summary.references = references.length;
       try {
         planSpatialLayout(
           [
@@ -886,6 +1161,23 @@ export function createStore(path, { seed = true } = {}) {
             ids.get(e.source),
             ids.get(e.target),
             e.label,
+          );
+        for (const r of references)
+          db.prepare("INSERT INTO document_references VALUES(?,?,?,?,?)").run(
+            randomUUID(),
+            ids.get(r.nodeId),
+            ids.get(r.dimId),
+            r.zoneId,
+            new Date().toISOString(),
+          );
+        for (const c of contexts)
+          db.prepare("INSERT INTO dim_context VALUES(?,?,?,?,?,?)").run(
+            ids.get(c.dimId),
+            c.nodeId ? ids.get(c.nodeId) : null,
+            c.zoneId,
+            c.view,
+            c.scroll,
+            new Date().toISOString(),
           );
         for (const n of validated)
           if (n.deletedAt) {

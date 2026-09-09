@@ -1,12 +1,12 @@
-# Dimention 0.4
+# Dimention 0.5
 
-A local world for notes, ideas, workflows, and tables arranged in real 3D space. A **Dim** is a room for a topic: a **Desk** for active work and **Storage** for reference. Multiple Dims and independent documents share the same world, and any of them can connect to one another.
+A local spatial notebook. **Dims** keep a project's active work, references, goal, and next action together. Switch between a real **3D Space**, a readable **Board**, and a sortable **List** without moving or duplicating the underlying documents.
 
-Built directly with JavaScript, Three.js, Vite, Node's HTTP server, and SQLite. No Superdesign, accounts, external fonts, cloud services, or deployment.
+Built with JavaScript, Three.js, Vite, Node HTTP, and SQLite. No accounts, Superdesign, cloud services, external AI, or deployment.
 
 ## Run
 
-Requires Node.js 24 or newer; tested with 24.18.0. In PowerShell:
+Node.js 24 or newer is required. In PowerShell:
 
 ```powershell
 cd Dimention
@@ -15,82 +15,65 @@ npm run build
 npm start
 ```
 
-Open [localhost:3000](http://localhost:3000). The server binds only to `127.0.0.1`. If that port is occupied, it tries the next available port, up to 3020; use the URL printed in the terminal. Stop a foreground server with **Ctrl+C**. Subsequent runs only need `npm start` unless the source changed.
+Open [localhost:3000](http://localhost:3000). The server binds to 127.0.0.1 only. If 3000 is occupied it tries the next port, through 3020, and prints the actual URL. Stop a foreground server with Ctrl+C. After the initial build, use npm start; rebuild after source changes.
 
-For development, run `npm run dev`. Vite and the API share the same server. Frontend changes reload automatically; restart after backend changes.
+For development use npm run dev. Frontend changes reload; restart the server after backend changes.
 
 ```powershell
 npm run build
 npm test
 ```
 
-The 27 tests use disposable databases, never your workspace database. Build first because the HTTP tests check the built frontend too. Details are in [VERIFICATION.md](VERIFICATION.md).
+Tests use temporary databases, never the normal workspace. PORT and DIMENTION_DB can override the local port and SQLite path. Clear those overrides before starting the normal workspace.
 
-Optional settings, set before launching:
+## Work in a Dim
 
-```powershell
-$env:PORT = '3100'
-$env:DIMENTION_DB = 'C:\my-local-data\dimention.sqlite'
-npm start
-```
+- Use **＋ Dim** beside Quick access to create a project. Each begins with Main desk and Library. Each Dim supports one to four named Desks and one to four Storage areas.
+- Select a Dim in the sidebar. Its saved view opens; new Dims start in Board view. In 3D Space, the camera frames its reserved plane.
+- **Board** groups readable document cards by area. **List** presents the same documents and references in compact rows. Search all content, filter by type or tag, and sort by title, creation, last edit, or favorites. Lists render 60 documents initially; Show more reveals the rest, and search always covers all items.
+- **Desk** holds active work. **Storage** is a searchable reference library. Every area accepts notes, ideas, workflows, and tables. New document, Move here, and Add reference are available within each area.
+- Set a **goal** and **next action** using Project details or the next-action Edit button. **Resume this Dim** opens the last document, restores the reading-page scroll position, and uses the saved view. Reading position saves after scrolling settles and when leaving the editor. It does not save the internal scroll position of a text field or the cursor selection.
+- Use area menus to rename an area or move its contents before removing it. At least one of each area type remains. Removing an area rehomes active and trashed originals, references, and the saved area context.
 
-## Make your first Dim
+## Capture, write, and find
 
-1. Click **New Dim**, give it a name and color, and create it. The camera opens its organizer immediately.
-2. Click the Dim in **Quick access** to zoom to its reserved space at any time. The sidebar also works as a collapsed icon rail.
-3. Use **+ New** beside Desks or Storage to create named areas such as Writing, This week, Research, or Assets. Each Dim starts with Main desk and Library and supports one to four of each type.
-4. Select an area to zoom in and see its documents. **New document** creates a note, idea, workflow, or table there. Either area type accepts every document type.
-5. **Bring existing** searches and moves existing documents into that area. The move button beside a document sends it to another area, another Dim, or independent space.
-6. **Rename** keeps an area's identity and contents. **Remove area** requires a destination for its documents, including those in Trash. At least one Desk and one Storage remain.
-7. Use **My world → New document** for independent content. Dims and independent documents share one world; focused views show only the selected Dim and its contents.
+- **Quick capture** saves a plain-text note to **Inbox**, independently of your current Dim. A title is optional and can be derived from the first line. Unsubmitted capture drafts recover in the same browser. Move an Inbox note to an area or choose Keep independent to finish filing it.
+- Notes and ideas have a Markdown text editor with heading, bold, list, and link helpers. **Read preview** renders headings, emphasis, lists, quotes, code, and HTTP(S) links. Raw HTML is escaped. This is a small Markdown subset, not a full rich-text or CommonMark editor.
+- **Focus** hides the document details. Preview and Focus preferences are remembered in the current browser. Documents open full-page; Back returns to the originating view. Reduced-motion settings skip the 3D transition.
+- Workflows retain ordered editable checklists. Tables retain editable columns, rows, and cells.
+- Tags and Favorites are saved with documents. Search includes titles, full text, tags, workflow steps, table columns, and every cell.
+- Select card checkboxes to move or favorite multiple originals together. Bulk movement and bulk favorite updates are atomic. Selecting a reference acts on its original document; the move dialog explains this.
+- **Save changes** commits edits to SQLite. Unsaved-change guards offer Save & continue, Discard, or Keep editing. Failed saves keep the editable draft. Unsaved document drafts also recover in the same browser.
 
-In a document's details, **Lives in** and **Desk or Storage** change its membership. **Save changes** commits that assignment and places it in the chosen area. **Arrange in area** proposes a fresh slot for an existing member. The Dim's **Open Dim overview** button shows all its named areas in a full-page view.
+| Shortcut | Action |
+| --- | --- |
+| Ctrl/Cmd+Shift+N | Quick capture |
+| Ctrl/Cmd+K | Search and jump to any Dim or document |
+| / outside an editor | Focus sidebar search |
+| Ctrl/Cmd+S | Save document |
+| Escape | Close editor with an unsaved-change guard, or clear selection |
 
-## Read, edit, and connect
+## Shared references and connections
 
-- Click a 3D card or a document in the sidebar to animate it into a full-page editor. **Back to 3D** or **Escape** animates it back. System reduced-motion preferences are respected.
-- **Save changes** or **Ctrl/Cmd+S** saves edits. Switching, closing, creating, and exporting guard unsaved changes with **Save & continue / Discard / Keep editing**.
-- Save failures leave the draft editable. Browser local storage also recovers unsaved drafts after a reload. Save to SQLite before clearing browser data or switching browsers.
-- Notes and ideas use multiline plain text. Workflows support adding, editing, completing, and removing steps. Tables support column names, cells, and adding/removing rows and columns.
-- In **Connections**, search for a destination and optionally describe the relationship. Links save immediately. Follow the incoming or outgoing cards to navigate; **Previous** retraces the documents you followed.
-- The sidebar's **Connections** view searches all routes by item title or relationship. Both ends of each route are clickable. Clicking a 3D line or its label opens the same navigator. Arrowheads indicate direction. Dims can connect to Dims or documents.
-- Search finds titles, content, workflow steps, table columns, and table cells across rooms. Type filters narrow document results. Press **/** outside an editor to search.
+**Pin to Dim** or **Add reference** makes a reference to one original document in another Dim. It does not duplicate content or change the original's coordinates. Changes to the original appear everywhere. References are labeled in Board, List, the area organizer, and the full-page editor. Returning from a reference keeps you in the Dim where you opened it.
 
-## The furnished room
+Each Dim can reference a given original once. A document cannot also be a reference in its own Dim. Moving the original into a Dim where it was referenced removes that redundant pin; references in other Dims remain. Unpin removes the reference only. Trashing either endpoint hides the reference; restoring brings it back when both endpoints are available.
 
-Dims are cutaway rooms with raised floors, low walls, rugs, wooden desks, chairs, desk lamps, and two-drawer cabinets. Directional and hemisphere lighting shade the geometry; soft contact shadows anchor the furniture.
+3D references appear as derived cards inside their assigned areas. They have no separately stored XYZ and cannot be dragged independently. Original documents and Dims remain movable. Editing or opening the derived card accesses the original.
 
-Click a cabinet or choose its Storage area to slide out the drawers. Stored document cards rise into view as the folders lift. **Close Storage**, clicking the same cabinet again, or leaving the area tucks them away. Opening a stored note from the sidebar opens its cabinet before expanding the full-page editor. Returning from the editor leaves that Storage open. Motion can reverse midway and stops completely when settled; reduced-motion settings skip the movement.
+Directed, labeled **Connections** express relationships between any documents or Dims. The editor shows incoming and outgoing links. A card's Connections button shows its related items; the sidebar navigator searches every route. In 3D, links appear for selected items and the focused Dim; **All connections** reveals the full graph. Previous retraces documents followed inside the editor.
 
-**Move** and **Select items** expose stored cards for placement. Furniture follows its Dim. Document cards use a raised presentation above desks and cabinets; animation does not write to the database. Numeric coordinates remain the saved placement anchors, and dragging changes those anchors by the drag delta. The sidebar and global Connections navigator retain access to all documents and routes while cards are tucked away. Each cabinet previews up to 24 folder blocks; its organizer lists every document.
+## The 3D space
 
-**Room view** is the default perspective and Reset view returns to it. **Aligned 3D** and **Top** are still available.
+Dims use aligned raised planes with quiet area markers. Furniture, drawers, and their animations have been removed. Titles face the screen. The world overview emphasizes Dim summaries; nearby Dim documents become visible as the camera approaches. Entering a Dim makes all its documents accessible, and Board/List provide the same information without perspective.
 
-## Arrange the world
+The camera starts aligned with **Lock angle** on. Drag to pan, scroll to zoom, or turn Lock angle off to orbit. Perspective, Aligned 3D, and Top set predictable angles. Fit all frames the current scope; Reset restores aligned framing.
 
-**Aligned 3D** centers the camera on the room axes, keeping Desk and Storage columns level. **Top** looks straight down at the X/Z plane; this view stays selected as you navigate between Dims and areas. The room grid has 50-unit spacing to match Snap, and surface labels sit on their planes. Drag to orbit freely; use Aligned 3D to straighten the view again. Camera framing includes the floor and visible documents with room for the toolbar.
+Use Move to drag original cards; X/Y/Z constrains an axis and Snap uses a 50-unit grid. Select items supports multi-selection, alignment, numeric offsets, and assignment. The editor's Position in space accepts exact coordinates from -5000 to 5000. Moves save immediately and offer Undo move for 12 seconds.
 
-| Control         | Behavior                                                                                     |
-| --------------- | -------------------------------------------------------------------------------------------- |
-| Explore         | Click to open; drag empty space to orbit.                                                    |
-| Pan             | Drag to pan. Right/middle drag also pans. Scroll zooms.                                      |
-| Select items    | Click cards to toggle selection. Shift-click and sidebar checkboxes also select.             |
-| Move            | Drag a card or selected group. X/Y/Z constrains the movement; View plane follows the screen. |
-| Snap            | Movement uses a 50-unit grid. **Snap to grid** rounds selected items' existing positions.    |
-| Selection tools | Align X/Y/Z, apply a numeric offset, or assign selected documents to a room.                 |
-| Fit all / Reset | Frame everything; Reset also restores the default viewing angle.                             |
+Every Dim reserves a 1200 × 1100 X/Z footprint at all heights. Outsiders cannot enter it. Assign a document to a Dim to bring it inside; releasing it places it outside the reserved footprints. Moving a Dim carries its originals and reference presentation, rejects collisions atomically, and never writes a coordinate record for a reference. Dims share a world and cannot nest. Independent documents can overlap one another; dense stacks can still require manual arrangement.
 
-Moving a Dim carries its active documents by the same amount. Selecting both a room and its document does not move the document twice. Placement operations are atomic: exceeding coordinate bounds or crossing a Dim boundary rejects the entire operation. Canvas movement, alignment, snapping, and offsets save immediately and offer **Undo move** for 12 seconds. Membership assignment saves immediately; change the assignment again to reverse it.
-
-Every Dim reserves a 1,200 × 1,100 footprint in the X/Z plane at all heights. Independent documents and other Dims cannot enter it. Membership is explicit: assign a document to an area to bring it inside; release it to independent space to place it outside. Moving a room stops before it covers an outside document or another room. New Dims find available space automatically. Independent cards can still overlap one another, and densely filled areas can need manual arrangement.
-
-Exact coordinates in **Position in space** range from −5000 to 5000 and save with the document. **Focus on return** frames that item when you return to 3D.
-
-## Trash, import, and backup
-
-**Move to Trash** hides an item and its connections. Trashing a Dim includes its active documents. Restore it from **Trash** to recover those contents and connections. Documents already in Trash before the room was trashed remain there. Restoring a document whose room is trashed also restores the room and the documents trashed with it. Links reappear when both endpoints are active. If its old space is occupied, a restored room and its returning documents are placed in available space without moving existing content. There is no permanent-purge UI.
-
-**Export JSON** downloads version 3, including active items, Trash, room membership, positions, payloads, timestamps, and connections. **Import JSON** accepts versions 1, 2, and 3, validates the full file, previews its counts, and appends with new IDs. Named areas and membership are retained. Preview checks that imported items can fit; appended items find available space without moving existing content. Existing content stays intact. Reimporting the same file creates another copy; import is not a merge or sync operation. Import supports up to 32 MiB per request, 1,000 items, and 5,000 connections. A small portable room is included at `tests/fixtures/import-example.json`.
+## Persistence, Trash, and backup
 
 Default database:
 
@@ -98,75 +81,39 @@ Default database:
 data\dimention.sqlite
 ```
 
-Startup migrates existing databases once, adding named areas and document zone IDs. Original content, relationships, and timestamps are preserved. Older Dims receive Main desk and Library. If older positions conflict with a reserved footprint, the migration relocates the room and its members or places a conflicting document safely; independent documents remain independent. The original text-only workflow migration remains supported. Samples are inserted only on first initialization, so an empty world stays empty after restart.
+SQLite stores documents, positions, tags, Inbox state, favorites, connections, references, and Dim working contexts. Browser storage holds unsaved drafts and display preferences. This is single-user local storage; another browser on the same server accesses the same saved documents, but not its unsaved drafts.
 
-SQLite uses WAL mode. For a file backup, **stop the server and copy the entire `data` directory** to another local folder. Do not copy only the database file while the server is running. To restore, stop the server and replace the data directory with the backup, keeping matching WAL files if present. Consistent pre-update SQLite snapshots are in `backups/`.
+Trash is reversible. Trashing a Dim includes its active originals; restoring restores that group and available relationships. Documents already in Trash before their Dim was trashed keep their earlier Trash state. Restore finds available space if an old footprint has been occupied. There is no permanent-purge UI.
 
-Databases, backups, logs, generated builds, and dependencies are excluded from Git. Files named `data/*browser-check.sqlite` are separate test data and are not used by `npm start`.
+**Export JSON** writes version 4, including Trash, all references, and saved working context. Import accepts versions 1–4, validates and previews the whole file, and appends with new IDs. It remaps references and context pointers as well as connections and membership. It does not merge duplicates. Imports are limited to 32 MiB, 1000 items, and 5000 connections; the world supports 5000 references. The portable example in tests/fixtures/import-example.json remains compatible.
 
-## Extending the app
+Version 0.5 adds Inbox and tags columns plus reference/context tables. It does not rewrite existing note content or spatial coordinates. A consistent pre-update snapshot is saved as **backups/pre-v05-1788924602684.sqlite**. Older schema migrations remain supported and initialization never reseeds an intentionally emptied world.
 
-Add one complete feature at a time: define its saved data and expected behavior, implement validation and persistence, add the UI, and verify it using a separate database before using real data.
+For a manual backup, **stop the server and copy the entire data directory** to another local folder. SQLite uses WAL mode; do not copy only the main database while it is running. Stop the server before restoring a backup. Databases, backups, logs, builds, and dependencies are excluded from Git.
 
-| File                                      | Responsibility                                                                          |
-| ----------------------------------------- | --------------------------------------------------------------------------------------- |
-| `server/store.mjs`                        | Schema migration, validation, SQLite transactions, import/export, Trash and membership. |
-| `server/server.mjs`                       | Local HTTP server, API routing, request limits and origin checks.                       |
-| `src/main.js`                             | Navigation, editor state, draft recovery, dialogs and API actions.                      |
-| `src/scene.js`                            | Demand rendering, cached scene objects, camera and movement.                            |
-| `src/room-scene.js`, `src/motion.js`      | Furnished room geometry, drawer presentation, and reversible motion.                    |
-| `src/scene-art.js`                        | Card textures, labels and resource disposal.                                            |
-| `src/organizer.js`, `src/area-actions.js` | Named-area views and organization dialogs.                                              |
-| `shared/spatial.js`                       | Shared reserved-space rules and placement planning.                                     |
-| `src/structured.js`                       | Workflow and table editor markup.                                                       |
-| `src/ui.js`                               | Escaping, icons and local-storage helpers.                                              |
-| `src/style.css`, `src/organizer.css`      | Visual design, layouts and responsive rules.                                            |
-| `tests/*.test.mjs`                        | Store and HTTP integration checks, including old-schema migration.                      |
+## Development map
 
-Keep rendering separate from stored data, and add tests for persistence or migration changes. For UI additions, exercise the actual creation, save, reopen, and failure paths in the browser. Before another schema change, take a consistent backup and test against a copy of existing data.
+| File | Responsibility |
+| --- | --- |
+| server/store.mjs | Validation, SQLite, atomic operations, Trash, import/export, references and resume |
+| server/server.mjs | Loopback HTTP/API, origin checks, request limits |
+| shared/spatial.js | Reserved footprints, ownership, collision checks, placement |
+| src/main.js | Navigation, saving, recovery, state and keyboard actions |
+| src/workspace.js | Board/List markup, full-content search, derived spatial references |
+| src/workspace-actions.js | Capture, project direction and reference dialogs |
+| src/organizer.js / src/area-actions.js | Area views, creation and organization |
+| src/scene.js / src/room-scene.js | Demand renderer, camera, dragging, aligned platforms |
+| src/scene-art.js | Card textures, labels and resource disposal |
+| src/markdown.js / src/structured.js | Safe reading preview and structured editors |
+| src/workspace.css | Notebook layout and responsive styles |
+| tests/*.test.mjs | Persistence, HTTP, spatial constraints, import and notebook checks |
 
-## API
+New API routes are POST /api/references, DELETE /api/references/:id, PATCH /api/dims/:id/context, and PATCH /api/favorites. GET /api/workspace now includes nodes, edges, references, and contexts. Existing node, position, organization, area, connection, Trash, import, and export routes remain available.
 
-All requests use the same local origin. Errors return `{ "error": "A useful message" }`.
+Documents add boolean inbox and an array of tags (up to 12, 40 characters each). Dim payloads add goal and nextAction (400 characters each). References contain id, nodeId, dimId, zoneId, and createdAt. Working contexts contain dimId, nodeId, zoneId, view, scroll, and updatedAt. IDs are generated by the server. Use the shared store for persistence changes and verify migration against a database copy before release.
 
-| Method | Route                         | Purpose                                                                          |
-| ------ | ----------------------------- | -------------------------------------------------------------------------------- |
-| GET    | `/api/health`                 | Health check                                                                     |
-| GET    | `/api/workspace`              | Active `{ nodes, edges }`                                                        |
-| GET    | `/api/export`                 | Version 3 JSON, including Trash                                                  |
-| POST   | `/api/import`                 | `{ workspace, preview? }`; validate and append                                   |
-| GET    | `/api/trash`                  | Trashed `{ nodes }`                                                              |
-| POST   | `/api/trash/:id/restore`      | Restore an item and its room group where applicable                              |
-| POST   | `/api/nodes`                  | Create a document or Dim                                                         |
-| PATCH  | `/api/nodes/:id`              | Update an item; room movement carries children                                   |
-| DELETE | `/api/nodes/:id`              | Move to Trash                                                                    |
-| PATCH  | `/api/positions`              | Atomic `{ positions: [{ id, x, y, z }] }`                                        |
-| PATCH  | `/api/organize`               | `{ ids, dimId, zoneId }`; assign and place documents (legacy `area` is accepted) |
-| POST   | `/api/dims/:id/zones`         | Create `{ type, name }` area                                                     |
-| PATCH  | `/api/dims/:id/zones/:zoneId` | Rename with `{ name }`                                                           |
-| DELETE | `/api/dims/:id/zones/:zoneId` | Remove with `{ replacementId }`, retaining documents                             |
-| POST   | `/api/connections`            | Create `{ source, target, label? }`                                              |
-| DELETE | `/api/connections/:id`        | Remove a connection                                                              |
+## Limits and verification
 
-Types: `dim`, `note`, `idea`, `workflow`, `table`. Core fields: `title`, `content`, `payload`, `x`, `y`, `z`, `dimId` (nullable), and `area` (`desk` or `storage`). Documents also have nullable `zoneId`. Dims have `payload.color` and `payload.zones: [{ id, name, type }]`, with zone IDs scoped to their Dim. Create requests accept `autoPlace: true` to find a safe position. Workflows use `payload.steps: [{ text, done }]`; tables use `{ columns: [string], rows: [[string]] }`. IDs and timestamps are supplied by the server. The existing `starred` value is preserved without a separate UI.
+The renderer works on demand, caps pixel density at 1.5, and pauses during Board/List viewing, full-page editing, and hidden tabs. Board/List page their document cards. The 100-item fixture is checked in the browser; this is not a guarantee of zero lag at arbitrary scale. See [VERIFICATION.md](VERIFICATION.md) for actual observations.
 
-Limits: 64 active Dims; one to four areas of each type per Dim; 60-character area names; 160-character titles; 100,000-character content; 200 workflow steps of up to 2,000 characters; 1–12 table columns and up to 200 rows; 80-character column names and connection labels; 2,000-character cells; 6 MiB ordinary requests. SQL is parameterized. Nonlocal Host headers and cross-origin requests are rejected.
-
-## Current scope
-
-This is a single-user local app. Dims share one world and cannot nest inside other Dims. The renderer draws on demand, pauses during full-page editing and when hidden, caps pixel density at 1.5, reuses card textures and connection geometry, and disposes removed resources. Focused views omit unrelated objects and links.
-
-Desktop browser checks use a disposable graph of 100 items with 99 connections. Room geometry is merged by finish, folder blocks are instanced, and drawer animation uses the same demand renderer. Repeated drawer cycles reuse their resources after the first reveal; searching leaves the 3D render count unchanged. Performance varies by GPU, window size, and scene density. There is no guarantee of zero lag at arbitrary scale. See VERIFICATION.md for observed results and limits.
-
-For a disposable performance workspace:
-
-```powershell
-node tests/fixtures/seed-performance.mjs data/my-performance-check.sqlite
-$env:DIMENTION_DB = 'data\my-performance-check.sqlite'
-$env:PORT = '3101'
-npm run dev
-```
-
-The fixture refuses existing files and the production database filename. Development canvases expose rendering counters as HTML data attributes; production builds omit them. Clear the two environment overrides before starting your normal workspace again.
-
-There is no multi-user editing, cloud sync, rich text, attachments, table formulas, or desktop installer. Concurrent edits use the last successful save. If WebGL is unavailable, the sidebar and full-page editors remain usable. Enable hardware acceleration and reload to restore the 3D view. Desktop mouse and keyboard use is the primary target; touch and mobile navigation have not been comprehensively tested.
+Current bounds: 64 active Dims, one to four areas of each type per Dim, 160-character titles, 100000-character content, 200 workflow steps, 1–12 table columns, and 200 table rows. No cloud sync, collaboration, attachments, AI generation, rich-text block editor, formulas, or desktop installer. Concurrent edits use the last successful save. If WebGL is unavailable, Board/List and editors remain available. Touch/mobile navigation has not been comprehensively tested.

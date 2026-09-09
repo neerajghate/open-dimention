@@ -1,48 +1,53 @@
-# Verification — Dimention 0.4
+# Verification — Dimention 0.5
 
-September 7, 2026. Windows, Node.js 24.18.0, and the Codex in-app browser. Browser writes used `data/organizers-browser-check.sqlite` on port 3100. The 100-item rendering fixture used `data/organizers-perf.sqlite` on port 3101. Production remains on `data/dimention.sqlite`, port 3000.
+September 8, 2026. Windows, Node.js v24.18.0, Vite 7.3.6, and the Codex in-app browser.
 
-## Build and automated checks
+## Automated checks
 
-`npm run build` succeeds. Application JavaScript: 80.06 kB (27.86 kB gzip). CSS: 40.16 kB (9.38 kB gzip). The Three.js vendor chunk is 515.55 kB (129.38 kB gzip), producing Vite's usual size warning, not a build failure.
+- Production build passes. Application JS is 97.83 kB (32.80 kB gzip), styles 52.98 kB (11.82 kB gzip), Three.js vendor 513.59 kB (128.96 kB gzip). Vite reports its standard vendor chunk size warning; the build succeeds.
+- All **32 tests pass**. The three obsolete drawer-motion tests and their unused implementation were removed; eight notebook tests were added to the existing 24 API/store/spatial tests.
+- Coverage includes four document types, persistence across server restarts, structured workflows/tables, validation errors, request limits, origin checks, parameterized SQL, Trash/restore, no reseeding, directed connections, and a 100-node graph.
+- Spatial checks retain explicit ownership, reserved footprints at all heights, atomic room/group movement, safe restore/import placement, and named area migrations.
+- New checks cover Inbox filing, tags/favorites, atomic bulk favorites, one-original references, duplicate/missing destinations, reference restoration, area removal, removal of redundant references on ownership transfer, and non-mutating spatial reference presentation.
+- Version 4 export/import remaps reference and context IDs, includes trashed sources, validates before writing, and preserves tags. Working context and project direction survive SQLite restart without changing content timestamps or positions.
+- Search covers full workflow text, table content and tags. Safe Markdown preview escapes executable HTML and rejects unsafe link schemes. Reference/context HTTP routes were exercised with valid and invalid requests.
 
-`npm test`: **27 passed, 0 failed**. The existing 24 tests cover document types, saved payloads, connections, persistence, seeding, validation, HTTP boundaries, named areas, reserved-space constraints, group movement, Trash/restore, version 1/2/3 import, and old-schema migration. Three new tests check:
+## Browser checks
 
-- A Storage animation reaches its exact target and stops requesting frames.
-- Reversing midway preserves its current position and finishes closed.
-- Reduced-motion settling works immediately, including during an interrupted opening.
+Writes used **data/notebook-browser-check.sqlite** at localhost:3100. No demo content was inserted into the production database.
 
-## Browser interaction checks
+- Entered Dims from Quick access; opened Board and List with Desk/Storage sections, readable previews, project direction and resume controls.
+- Captured a note into Inbox, verified its count, and filed it into a Dim's Library. Its text remained intact and it left Inbox.
+- Pinned that note into another Dim, edited its original through the reference, saved tags and favorite state, and returned to the reference's Dim. Both views displayed the updated content.
+- Opened the reference directly from its derived 3D card; the editor identified the reference workspace and original location. Back returned to 3D.
+- Verified search by tag content, clearing filters, and sorting by title. Selected two originals and moved both to a Desk; selection cleared after the completed operation.
+- Created a named Desk through the new Board UI and verified its empty state and creation controls.
+- Checked Markdown headings, bold and lists in reading preview, and checked Focus mode.
+- A long note resumed at **scrollTop 1440** after closing, reloading the browser, entering its Dim and choosing Resume. Preview preference also survived reload.
+- Attempted to save 13 tags. The UI displayed “Save failed · draft preserved” and the validation message. Back opened the unsaved-changes guard; Keep editing retained the draft, and correcting the tags allowed a successful save.
+- Visually inspected desktop 1280×720 and compact 665×675 layouts. Corrected sidebar clipping and the compact project header. The temporary viewport override was reset.
+- Visually inspected the aligned 3D platforms and used the Top camera preset. Furniture and drawer animation are absent.
 
-- Inspected the cutaway room at 1280 × 720: raised floor, low walls, aligned rugs, desks, chairs, lamps, and two-drawer cabinets have actual mesh geometry and directional shading.
-- Clicked the cabinet in 3D to select Library. Saw its drawers slide out, folder blocks rise, and the note appear above the cabinet. The organizer showed the correct contents and Close Storage control.
-- Closed Storage and confirmed its document tucked away. Reversed a closing animation by reopening the area midway; it settled open without snapping.
-- Opened a stored note directly from the sidebar while its cabinet was closed. Its cabinet opened before the full-page editor appeared. The correct title loaded; Back to 3D returned to the open Storage.
-- Used Move mode to expose stored documents. Dragged Untitled note along X in the test database: X changed from 1855 to 1761, while Y stayed 85 and Z stayed -280. This confirms the raised presentation is not added to saved coordinates. The change exists only in the test database.
-- Checked Aligned 3D and Top alongside the new default Room view.
-- Followed Route 7 from Room 1 document 6 to Performance room 2. The full-page Dim and Back to 3D return both showed the correct destination.
-- Reloaded production only after verifying there was no open draft. Inspected the furnished Dim and opened its Storage in the app's 665 × 675 panel. No browser warning/error logs were reported during final checks.
+## Performance observations
 
-## Rendering smoke test
+The separate **data/organizers-perf.sqlite** fixture at localhost:3101 contains 100 items: four Dims, 24 room documents, 72 independent documents, and 99 directed connections.
 
-The fixture contains **100 items: 4 Dims, 24 room documents, and 72 independent documents**, with **99 connections**. Development-only canvas attributes report rendering and allocation counters.
+- World overview: 102 draw calls in the observed frame, 108 texture builds, and 99 edge geometry builds.
+- Focused Dim: **14 draw calls**, 19 live geometries and 90 live textures in the observed frame. A camera transition reported 108.7 FPS in its short internal sample; this is not a sustained benchmark.
+- After the camera settled at render count 109, switching to Board and searching left render count **109** and texture/geometry counters unchanged. The renderer was idle during document browsing.
+- Board initially displayed 60 of the 96 documents. Show more displayed all 96. Searching for Floating document 72 found it even before the second page was shown.
+- Performance-tab warning/error logs were empty. The notebook test's rejected tag save generated an expected HTTP 400; it was handled visibly without losing the draft.
 
-- The initial whole-world furnished scene used 487 draw calls.
-- Opening one Storage used 48 draw calls in its focused view. One short camera sample measured about 89 frames/second on this browser; this is not a sustained benchmark or a guarantee for other machines.
-- Initial reveals warm previously hidden document textures and connection labels. After warming, a complete close/open cycle kept **206 texture builds, 99 connection builds, 197 live textures, and 327 geometries** unchanged.
-- Settled Storage reported progress 1.000 and animation false; closed Storage reported progress 0.000 and animation false. Searching left the render count unchanged at 192 in one observed idle check.
-- A smaller-room sequence also retained 32 texture builds, 6 connection builds, 32 live textures, and 98 geometries across repeated opening, closing, editor navigation, and reversal.
+These observations are limited to this machine and fixture. They do not establish zero lag at arbitrary scale. Mobile/touch interaction, physical GPU failure, long-duration memory stress, and concurrent multi-user editing were not comprehensively tested. The fallback path remains implemented; this release did not simulate a lost GPU in the browser.
 
-Static furniture is merged by finish, folder blocks use instancing, and lighting uses no expensive real-time shadow maps. Soft contact shadows are generated locally. Animation shares the demand renderer and ends when settled. Full-page editing and hidden documents pause rendering. Instanced mesh buffers, owned geometries, materials, and textures are disposed when replaced; shared sprite geometry is retained.
+## Existing data and live launch
 
-## Data and launch
+- Created the consistent SQLite snapshot **backups/pre-v05-1788924602684.sqlite** before the schema change.
+- Migrated a copy of that database and compared every original node field across all **13 records**, including Trash. All original values, text, payloads, timestamps, membership and XYZ coordinates matched.
+- Launched the production build at **http://localhost:3000** using **data/dimention.sqlite**. HTTP workspace returned 12 active items and six connections; the existing one-item Trash remained intact.
+- Repeated the original-field comparison after production startup; all 13 records remained unchanged.
+- Opened the existing sample Dim in the served production build. Its Desk and Library showed the existing documents. Production warning/error logs were empty. Navigating the Dim creates working-context metadata only.
 
-This release changes frontend rendering and presentation only. There is no database migration or live placement rewrite. Storage animation does not send position writes. The live workspace still showed one active Dim, eleven active documents, and six connections during the check; its existing Trash remained available. Production was not used for test writes.
+## Practical scope
 
-The existing local server serves the new build at `http://localhost:3000`. The test servers on ports 3100 and 3101 were stopped after verification. The version 0.3 migration backup and preservation record remain in local `backups/` and ignored `data/` files. Earlier verification is available in Git commit `bfbc391`.
-
-## Limits
-
-Room furniture is a stylized cutaway representation. Cards rise above furniture for reading and return to Storage when it closes; numeric coordinates remain saved placement anchors. Closed cards and their 3D connection lines are tucked away, while the sidebar and global connection navigator retain access to the full graph. Each cabinet previews at most 24 folder blocks; the organizer lists all documents.
-
-Reduced-motion behavior was tested at the motion-controller level, not through browser OS emulation. Broad mobile/touch testing and actual GPU failure were not performed. The smaller app panel was visually checked. Performance depends on hardware and scene density; there is no guarantee of zero lag at arbitrary scale. Reserved-space rules, local-only persistence, and the existing single-user scope remain in effect.
+Explicit Save and draft recovery remain in place. Markdown supports a documented subset and does not load external images. Resume stores the reading page's scroll position, not textarea scroll or cursor selection. References have derived presentation positions and cannot be dragged independently. Dims and original documents retain stored XYZ and reserved-space rules. The app remains local, single-user, and without cloud, AI, attachments, or collaboration.

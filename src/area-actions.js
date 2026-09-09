@@ -117,10 +117,16 @@ export function areaActions({
   }
   function moveDoc(id) {
     return navigate(() => {
-      const n = get(id),
+      const ids = Array.isArray(id) ? id : [id];
+      const n = get(ids[0]),
         dims = getGraph().nodes.filter((n) => n.type === "dim");
       modal(
-        heading("Move document", n.title) +
+        heading(
+          ids.length > 1 ? "Move selected documents" : "Move document",
+          ids.length > 1
+            ? `${ids.length} original documents will move. References continue to point to them.`
+            : n.title,
+        ) +
           `<form id="area-form"><label for="move-home">Dim</label><select id="move-home"><option value="">Independent document</option>${dims.map((d) => `<option value="${d.id}" ${d.id === n.dimId ? "selected" : ""}>${esc(d.title)}</option>`).join("")}</select><label for="move-zone">Desk or Storage</label><select id="move-zone" ${n.dimId ? "" : "disabled"}>${areaOptions(get(n.dimId), n.zoneId)}</select><div class="dialog-actions"><button type="button" class="secondary" data-close-dialog>Cancel</button><button class="primary">Move document</button></div></form>`,
       );
       $("#move-home").onchange = (e) => {
@@ -132,7 +138,7 @@ export function areaActions({
           zoneId = $("#move-zone").value || null;
         const next = await api("/organize", {
           method: "PATCH",
-          body: { ids: [id], dimId, zoneId },
+          body: { ids, dimId, zoneId },
         });
         commit(next, { dimId, zoneId });
       });

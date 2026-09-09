@@ -231,24 +231,6 @@
   text-align: left;
   font-size: 12px;
 }
-.zone-detail.storage .organizer-docs {
-  animation: storage-reveal 380ms 150ms both;
-}
-@keyframes storage-reveal {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .zone-detail.storage .organizer-docs {
-    animation: none;
-  }
-}
 .dim-focused .view-presets {
   left: 20px;
   right: auto;

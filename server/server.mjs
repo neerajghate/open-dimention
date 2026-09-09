@@ -84,6 +84,22 @@ export async function createAppServer({
           });
         if (req.method === "GET" && pathname === "/api/trash")
           return json(res, 200, store.trash());
+        if (req.method === "PATCH" && pathname === "/api/favorites")
+          return json(res, 200, store.favoriteNodes(await body(req)));
+        if (req.method === "POST" && pathname === "/api/references")
+          return json(res, 201, store.createReference(await body(req)));
+        const referenceRoute = pathname.match(/^\/api\/references\/([^/]+)$/);
+        if (req.method === "DELETE" && referenceRoute) {
+          store.deleteReference(referenceRoute[1]);
+          return json(res, 200, { ok: true });
+        }
+        const contextRoute = pathname.match(/^\/api\/dims\/([^/]+)\/context$/);
+        if (req.method === "PATCH" && contextRoute)
+          return json(
+            res,
+            200,
+            store.saveContext(contextRoute[1], await body(req)),
+          );
         const zoneRoute = pathname.match(
           /^\/api\/dims\/([^/]+)\/zones(?:\/([^/]+))?$/,
         );

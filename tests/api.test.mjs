@@ -108,7 +108,7 @@ test("all four types create, update and survive a server restart; export equals 
   assert.deepEqual(graph.nodes, expected);
   assert.deepEqual(graph.edges, [edge.data]);
   const exported = await f.request("/export");
-  assert.equal(exported.data.version, 3);
+  assert.equal(exported.data.version, 4);
   assert.deepEqual(exported.data.nodes, expected);
   assert.deepEqual(exported.data.edges, graph.edges);
   assert.match(exported.headers.get("content-disposition"), /attachment/);
@@ -176,6 +176,8 @@ test("first initialization seeds once; deleting every type never recreates sampl
   assert.deepEqual((await f.request("/workspace")).data, {
     nodes: [],
     edges: [],
+    references: [],
+    contexts: [],
   });
 });
 
@@ -215,6 +217,8 @@ test("invalid node, workflow and table inputs produce controlled errors without 
   assert.deepEqual((await f.request("/workspace")).data, {
     nodes: [],
     edges: [],
+    references: [],
+    contexts: [],
   });
 });
 

@@ -81,14 +81,24 @@ export function createWorkspaceScene(container, callbacks) {
     textureBuilds = 0,
     edgeBuilds = 0,
     viewStyle = "room",
-    preferredView = "room";
+    preferredView = "aligned";
   let nodeById = new Map(),
     documentSlots = new Map();
-  const revealWaiters = new Set();
-  const isVisible = (n) =>
-    !view.dimId ||
-    n.id === view.dimId ||
-    (n.dimId === view.dimId && (!view.zoneId || n.zoneId === view.zoneId));
+  let cameraLocked = true;
+  controls.enableRotate = false;
+  controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+  const isVisible = (n) => {
+    if (!view.dimId && view.scope === "inbox") return !!n.inbox;
+    if (!view.dimId && view.scope === "starred")
+      return n.type !== "dim" && n.starred;
+    if (!view.dimId && view.scope === "loose")
+      return n.type !== "dim" && !n.dimId && !n.inbox;
+    return (
+      !view.dimId ||
+      n.id === view.dimId ||
+      (n.dimId === view.dimId && (!view.zoneId || n.zoneId === view.zoneId))
+    );
+  };
   const visibleSprites = () => [...sprites.values()].filter((s) => s.visible);
   const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
   function schedule() {
@@ -114,14 +124,7 @@ export function createWorkspaceScene(container, callbacks) {
         tween = null;
       }
     }
-    let roomMoving = false;
-    for (const room of rooms.values())
-      roomMoving = room.advance(now, reduced()) || roomMoving;
-    if (roomMoving || [...rooms.values()].some((r) => r.storage.size))
-      updatePresentation();
-    for (const waiter of revealWaiters)
-      if ((rooms.get(waiter.dimId)?.progress(waiter.zoneId) ?? 1) >= 0.999)
-        waiter.done();
+    updatePresentation();
     if (linksDirty) {
       updateLinks();
       linksDirty = false;
@@ -137,13 +140,9 @@ export function createWorkspaceScene(container, callbacks) {
       canvas.dataset.textures = renderer.info.memory.textures;
       canvas.dataset.geometries = renderer.info.memory.geometries;
       canvas.dataset.drawCalls = renderer.info.render.calls;
-      canvas.dataset.storageProgress =
-        view.dimId && view.zoneId
-          ? (rooms.get(view.dimId)?.progress(view.zoneId) ?? 0).toFixed(3)
-          : "0.000";
-      canvas.dataset.storageAnimating = String(roomMoving);
+      canvas.dataset.cameraLocked = String(cameraLocked);
     }
-    if (tween || roomMoving) schedule();
+    if (tween) schedule();
   }
   controls.addEventListener("change", () => {
     const direction = camera.position.clone().sub(controls.target).normalize();
@@ -225,7 +224,14 @@ export function createWorkspaceScene(container, callbacks) {
         links.set(e.id, link);
         edgeBuilds++;
       }
-      link.group.visible = a.visible && b.visible;
+      link.group.visible =
+        a.visible &&
+        b.visible &&
+        (view.showAllLinks ||
+          selected.has(e.source) ||
+          selected.has(e.target) ||
+          view.dimId === e.source ||
+          view.dimId === e.target);
       if (!link.group.visible) continue;
       const active = selected.has(e.source) || selected.has(e.target),
         color = active ? "#c9beff" : "#7889ad";
@@ -285,27 +291,11 @@ export function createWorkspaceScene(container, callbacks) {
       link.label.position.y += 20;
     }
   }
-  function displayPosition(n, progress) {
-    if (n.type === "dim") return new THREE.Vector3(n.x, n.y + 260, n.z - 515);
-    if (!n.dimId) return new THREE.Vector3(n.x, n.y, n.z);
-    if (n.area !== "storage") return new THREE.Vector3(n.x, n.y + 115, n.z);
-    const dim = nodeById.get(n.dimId);
-    if (!dim) return new THREE.Vector3(n.x, n.y, n.z);
-    const p = zoneCenter(dim, n.zoneId),
-      index = documentSlots.get(n.id) || 0;
-    const closed = new THREE.Vector3(
-      p.x + ((index % 10) - 4.5) * 24,
-      dim.y + 5,
-      p.z + 35,
-    );
-    const open = new THREE.Vector3(
+  function displayPosition(n) {
+    return new THREE.Vector3(
       n.x,
-      Math.max(n.y + 210, dim.y + 235),
-      n.z + 60,
-    );
-    return closed.lerp(
-      open,
-      progress ?? rooms.get(n.dimId)?.progress(n.zoneId) ?? 1,
+      n.y + (n.type === "dim" ? 210 : 0),
+      n.z + (n.type === "dim" ? -515 : 0),
     );
   }
   function updatePresentation() {
@@ -313,11 +303,15 @@ export function createWorkspaceScene(container, callbacks) {
     for (const n of nodes) {
       const sprite = sprites.get(n.id);
       if (!sprite) continue;
-      const storage = n.dimId && n.area === "storage",
-        progress = storage ? (rooms.get(n.dimId)?.progress(n.zoneId) ?? 1) : 1;
+      const overview = !view.dimId && mode !== "move" && mode !== "multi";
+      const dim = n.dimId ? nodeById.get(n.dimId) : null;
+      const closeEnough =
+        dim &&
+        camera.position.distanceTo(new THREE.Vector3(dim.x, dim.y, dim.z)) <
+          2300;
       const visible =
         isVisible(n) &&
-        (!storage || progress > 0.01) &&
+        (!overview || !n.dimId || closeEnough) &&
         !(
           n.type === "dim" &&
           view.dimId &&
@@ -328,15 +322,14 @@ export function createWorkspaceScene(container, callbacks) {
         sprite.visible = visible;
         linksDirty = true;
       }
-      sprite.material.opacity = storage ? Math.min(1, progress * 1.4) : 1;
-      const scale = storage ? 0.35 + 0.65 * progress : 1;
+      sprite.material.opacity = 1;
       sprite.scale.set(
-        (n.type === "dim" ? 360 : 240) * scale,
-        (n.type === "dim" ? 190 : 127) * scale,
+        n.type === "dim" ? 420 : 240,
+        n.type === "dim" ? 222 : 127,
         1,
       );
       if (!movingIds.has(n.id)) {
-        const position = displayPosition(n, progress);
+        const position = displayPosition(n);
         if (!sprite.position.equals(position)) {
           sprite.position.copy(position);
           linksDirty = true;
@@ -345,39 +338,8 @@ export function createWorkspaceScene(container, callbacks) {
     }
   }
   function openStorage() {
-    for (const [id, room] of rooms)
-      room.setOpen(
-        view.dimId === id ? view.zoneId : null,
-        room.group.visible && (mode === "move" || mode === "multi"),
-        reduced() || !room.group.visible,
-      );
     updatePresentation();
     schedule();
-  }
-  function revealDocument(id) {
-    const n = nodeById.get(id);
-    if (
-      !n?.dimId ||
-      n.area !== "storage" ||
-      document.hidden ||
-      reduced() ||
-      (rooms.get(n.dimId)?.progress(n.zoneId) ?? 1) >= 0.999
-    )
-      return Promise.resolve();
-    return new Promise((resolve) => {
-      const waiter = {
-        dimId: n.dimId,
-        zoneId: n.zoneId,
-        done() {
-          clearTimeout(timer);
-          revealWaiters.delete(waiter);
-          resolve();
-        },
-      };
-      const timer = setTimeout(() => waiter.done(), 750);
-      revealWaiters.add(waiter);
-      schedule();
-    });
   }
   function update(nextNodes, nextEdges, nextSelected = [], nextView = {}) {
     const selectionKey = [...nextSelected].sort().join(","),
@@ -443,6 +405,8 @@ export function createWorkspaceScene(container, callbacks) {
         n.area,
         n.dimId,
         n.payload.color,
+        n.payload.goal,
+        n.payload.nextAction,
         counts.get(n.id) || 0,
         selected.has(n.id),
       ].join("|");
@@ -473,10 +437,12 @@ export function createWorkspaceScene(container, callbacks) {
           r = { ...createRoom(n, members), key: roomKey };
           rooms.set(n.id, r);
           world.add(r.group);
-          textureBuilds += zonesOf(n).length * 2 + 1;
+          textureBuilds += zonesOf(n).length;
         }
         r.group.position.set(n.x, n.y, n.z);
-        r.group.visible = !view.dimId || view.dimId === n.id;
+        r.group.visible =
+          (!view.dimId && (!view.scope || view.scope === "all")) ||
+          view.dimId === n.id;
       }
     }
     const focusedDim = nodes.find((n) => n.id === view.dimId);
@@ -562,11 +528,11 @@ export function createWorkspaceScene(container, callbacks) {
     );
   }
   function fit(reset = false) {
-    if (reset) preferredView = "room";
+    if (reset) preferredView = "aligned";
     framePoints(
       pointsFor(nodes.filter(isVisible)),
       reset
-        ? roomDirection()
+        ? alignedDirection()
         : camera.position.clone().sub(controls.target).normalize(),
       !reset,
     );
@@ -678,6 +644,16 @@ export function createWorkspaceScene(container, callbacks) {
       e.stopImmediatePropagation();
       e.preventDefault();
       const id = hit.object.userData.id;
+      const reference = nodeById.get(id);
+      if (reference?.referenceNodeId) {
+        if (mode === "move" || mode === "multi" || e.shiftKey)
+          callbacks.onBlocked?.(
+            "This is a reference. Move its original or change the reference area in Board view.",
+          );
+        else
+          callbacks.onReference?.(reference.dimId, reference.referenceNodeId);
+        return;
+      }
       if (e.shiftKey || mode === "multi") {
         callbacks.onToggle(id);
         return;
@@ -803,14 +779,20 @@ export function createWorkspaceScene(container, callbacks) {
     focus,
     rect,
     setView,
-    revealDocument,
+    setCameraLocked(value) {
+      cameraLocked = value;
+      controls.enableRotate = !value;
+      controls.mouseButtons.LEFT =
+        value || mode === "pan" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+      if (value) setView("aligned");
+    },
     setMode(m, a = "screen", s = false) {
       mode = m;
       axis = a;
       snap = s;
       openStorage();
       controls.mouseButtons.LEFT =
-        m === "pan" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+        m === "pan" || cameraLocked ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
       canvas.style.cursor =
         m === "move" || m === "pan"
           ? "grab"
@@ -822,8 +804,6 @@ export function createWorkspaceScene(container, callbacks) {
       if (paused === value) return;
       paused = value;
       if (paused) {
-        for (const room of rooms.values())
-          room.advance(performance.now(), true);
         updatePresentation();
         cancelAnimationFrame(frame);
         frame = 0;
@@ -840,7 +820,6 @@ export function createWorkspaceScene(container, callbacks) {
       lastNodes = null;
     },
     dispose() {
-      for (const waiter of revealWaiters) waiter.done();
       observer.disconnect();
       document.removeEventListener("visibilitychange", visibility);
       controls.dispose();
