@@ -44,7 +44,7 @@ These observations are limited to this machine and fixture. They do not establis
 
 - Created the consistent SQLite snapshot **backups/pre-v05-1788924602684.sqlite** before the schema change.
 - Migrated a copy of that database and compared every original node field across all **13 records**, including Trash. All original values, text, payloads, timestamps, membership and XYZ coordinates matched.
-- Launched the production build at **http://localhost:3000** using **data/dimention.sqlite**. HTTP workspace returned 12 active items and six connections; the existing one-item Trash remained intact.
+- Launched the production build at **http://localhost:3000** using the project-local **data/dimention.sqlite** database. The workspace API returned the existing active items and connections, and Trash remained intact.
 - Repeated the original-field comparison after production startup; all 13 records remained unchanged.
 - Opened the existing sample Dim in the served production build. Its Desk and Library showed the existing documents. Production warning/error logs were empty. Navigating the Dim creates working-context metadata only.
 
