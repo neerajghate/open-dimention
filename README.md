@@ -9,8 +9,8 @@ Built with JavaScript, Three.js, Vite, Node HTTP, and SQLite. Runs locally witho
 Node.js 24 or newer and Git are required. Clone the repository, then install and run:
 
 ```powershell
-git clone https://github.com/neerajghate/Dimention.git
-cd Dimention
+git clone https://github.com/neerajghate/open-dimention.git
+cd open-dimention
 npm ci
 npm run build
 npm start
