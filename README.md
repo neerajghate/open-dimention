@@ -1,8 +1,20 @@
-# Dimention 0.5
+<p align="center">
+  <img src="public/favicon.svg" width="72" height="72" alt="Open Dimention icon" />
+</p>
+
+# Open Dimention
+
+**A little space for your next big idea.**
+
+Welcome! Dimention gives your notes, projects, and workflows a home you can explore. Create a **Dim** for each topic, keep active work on a Desk, and collect useful references in Storage. Start with one note and let your space grow with you.
 
 A local spatial notebook. **Dims** keep a project's active work, references, goal, and next action together. Switch between a real **3D Space**, a readable **Board**, and a sortable **List** without moving or duplicating the underlying documents.
 
 Built with JavaScript, Three.js, Vite, Node HTTP, and SQLite. Runs locally without accounts, cloud services, or external AI.
+
+**Contributions are welcome.** Whether you're fixing a bug, improving the interface, writing docs, or sharing an idea, we'd love your help. Read the [contribution guide](CONTRIBUTING.md) or [open an issue](https://github.com/neerajghate/open-dimention/issues).
+
+Use **Watch** at the top of this repository to follow updates, **Fork** to make your own copy, and pull requests to share your improvements.
 
 ## Run
 
