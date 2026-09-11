@@ -2,13 +2,14 @@
 
 A local spatial notebook. **Dims** keep a project's active work, references, goal, and next action together. Switch between a real **3D Space**, a readable **Board**, and a sortable **List** without moving or duplicating the underlying documents.
 
-Built with JavaScript, Three.js, Vite, Node HTTP, and SQLite. No accounts, Superdesign, cloud services, external AI, or deployment.
+Built with JavaScript, Three.js, Vite, Node HTTP, and SQLite. Runs locally without accounts, cloud services, or external AI.
 
 ## Run
 
-Node.js 24 or newer is required. In PowerShell:
+Node.js 24 or newer and Git are required. Clone the repository, then install and run:
 
 ```powershell
+git clone https://github.com/neerajghate/Dimention.git
 cd Dimention
 npm ci
 npm run build
@@ -78,10 +79,10 @@ Every Dim reserves a 1200 × 1100 X/Z footprint at all heights. Outsiders cannot
 Default database:
 
 ```text
-data\dimention.sqlite
+data/dimention.sqlite
 ```
 
-SQLite stores documents, positions, tags, Inbox state, favorites, connections, references, and Dim working contexts. Browser storage holds unsaved drafts and display preferences. This is single-user local storage; another browser on the same server accesses the same saved documents, but not its unsaved drafts.
+The database is created inside the project directory on first launch. SQLite stores documents, positions, tags, Inbox state, favorites, connections, references, and Dim working contexts. Browser storage holds unsaved drafts and display preferences. This is single-user local storage; another browser on the same server accesses the same saved documents, but not its unsaved drafts.
 
 Trash is reversible. Trashing a Dim includes its active originals; restoring restores that group and available relationships. Documents already in Trash before their Dim was trashed keep their earlier Trash state. Restore finds available space if an old footprint has been occupied. There is no permanent-purge UI.
 

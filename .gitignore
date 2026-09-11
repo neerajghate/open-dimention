@@ -8,3 +8,6 @@ backups/
 *.sqlite-*
 *.db
 *.db-*
+.env
+.env.*
+!.env.example
